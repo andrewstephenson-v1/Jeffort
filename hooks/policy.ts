@@ -333,7 +333,7 @@ export function mix(levels: readonly string[]): Record<Level, number> {
   return out
 }
 
-/** Bar styles the band and pane can draw. */
+/** Bar styles the band can draw. */
 export const BAR_STYLES: Record<string, { label: string; blurb: string }> = {
   savings: { label: 'Savings', blurb: 'Used against estimated saved, with net cost' },
   mix: { label: 'Effort mix', blurb: 'Share of turns at each effort level, in the level colours' },

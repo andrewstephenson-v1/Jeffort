@@ -518,7 +518,7 @@ export const register: Register = (on, options) => {
             )
           })}
           <Text dimColor>Swatches: used and saved bar, then low, medium, high, xhigh, and extra spend.</Text>
-          <Text bold>Bar style</Text>
+          <Text bold>Band bar style</Text>
           {BAR_STYLE_IDS.map((id) => {
             const b = BAR_STYLES[id]!
             const sample = id === 'mix' ? { low: 5, medium: 3, high: 3, xhigh: 0, max: 0 } : null
@@ -551,8 +551,8 @@ export const register: Register = (on, options) => {
     const log = await read($, turns)
     const levels = Object.fromEntries(LEVELS.map((l) => [l, sessionCounts[l] ?? 0])) as Record<Level, number>
     const peak = Math.max(1, ...Object.values(levels))
-    const room = Math.max(3, rows - 19)
-    const hasBar = s.applied > 0 && s.outputTokens + Math.abs(s.tokensSaved) > 0
+    const room = Math.max(3, rows - 16)
+    const scored = s.applied > 0 && s.outputTokens + Math.abs(s.tokensSaved) > 0
 
     return (
       <Box flexDirection="column" gap={1}>
@@ -562,15 +562,9 @@ export const register: Register = (on, options) => {
           <Text dimColor>{isOn ? 'on ' : 'off '}</Text>
           <Button key="toggle" label={isOn ? 'Turn off' : 'Turn on'} onPress={() => setEnabled($, !isOn)} />
         </Box>
+        {/* No bar here: the band below already draws it, and the level rows show the mix. */}
         <Box flexDirection="column">
-          <Text dimColor>{styleId === 'mix' ? 'This session, share of turns at each effort' : 'This session, estimated'}</Text>
-          {!hasBar ? <Text dimColor>No turns scored yet.</Text> : null}
-          {hasBar && styleId === 'mix' ? mixBar({ Box, Text }, p, sessionCounts) : null}
-          {hasBar && styleId === 'mix' ? mixLegend({ Box, Text }, p, sessionCounts) : null}
-          {hasBar && styleId !== 'mix' ? bar({ Box, Text }, p, s) : null}
-          {hasBar ? <Text dimColor>{barLegend(s)}</Text> : null}
-        </Box>
-        <Box flexDirection="column">
+          <Text dimColor>{scored ? `This session, est.: ${barLegend(s)}` : 'No turns scored yet this session.'}</Text>
           {proj ? (
             <Text dimColor>
               This project ({proj.name}): {proj.stats.changed} of {proj.stats.applied} turns changed · ~
