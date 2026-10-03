@@ -67,7 +67,7 @@ test('system reminders are stripped from the prompt', () => {
   expect(cleanPrompt('<system-reminder>x</system-reminder>\nhello')).toBe('hello')
 })
 
-import { barModel, estimateSaved, outputPrice, parseEnv } from '../hooks/policy'
+import { barModel, estimateSaved, outputPrice, parseEnv, shares } from '../hooks/policy'
 
 test('savings estimate: lower level than baseline saves, higher spends', () => {
   expect(estimateSaved(550, 'low', 'high')).toBe(450)
@@ -90,4 +90,12 @@ test('bar: saving adds a segment, overspend is shown separately', () => {
   expect(barModel(307, 549)).toEqual({ used: 307, saved: 549, over: 0 })
   expect(barModel(400, -100)).toEqual({ used: 300, saved: 0, over: 100 })
   expect(barModel(0, 0)).toEqual({ used: 0, saved: 0, over: 0 })
+})
+
+test('shares are whole percentages that always sum to 100', () => {
+  expect(shares({ low: 5, medium: 3, high: 3, xhigh: 0, max: 0 })).toEqual({ low: 46, medium: 27, high: 27, xhigh: 0, max: 0 })
+  expect(shares({ low: 1, medium: 1, high: 1, xhigh: 0, max: 0 })).toEqual({ low: 34, medium: 33, high: 33, xhigh: 0, max: 0 })
+  expect(shares({ low: 0, medium: 0, high: 0, xhigh: 0, max: 0 })).toEqual({ low: 0, medium: 0, high: 0, xhigh: 0, max: 0 })
+  const sum = Object.values(shares({ low: 7, medium: 2, high: 9, xhigh: 4, max: 1 })).reduce((a, b) => a + b, 0)
+  expect(sum).toBe(100)
 })

@@ -265,3 +265,34 @@ export function mix(levels: readonly string[]): Record<Level, number> {
   for (const l of levels) if (isLevel(l)) out[l] += 1
   return out
 }
+
+/** Bar styles the band and pane can draw. */
+export const BAR_STYLES: Record<string, { label: string; blurb: string }> = {
+  savings: { label: 'Savings', blurb: 'Used against estimated saved, with net cost' },
+  mix: { label: 'Effort mix', blurb: 'Share of turns at each effort level, in the level colours' },
+}
+export const BAR_STYLE_IDS = Object.keys(BAR_STYLES)
+export const DEFAULT_BAR_STYLE = 'savings'
+export const isBarStyle = (v: unknown): v is string => typeof v === 'string' && v in BAR_STYLES
+
+/**
+ * Whole-number percentage of turns at each level, summing to exactly 100 (largest remainder), or
+ * all zeros when there are no turns.
+ */
+export function shares(counts: Record<Level, number>): Record<Level, number> {
+  const out = { low: 0, medium: 0, high: 0, xhigh: 0, max: 0 } as Record<Level, number>
+  const total = LEVELS.reduce((n, l) => n + counts[l], 0)
+  if (total <= 0) return out
+  const raw = LEVELS.map((l) => (counts[l] * 100) / total)
+  LEVELS.forEach((l, i) => {
+    out[l] = Math.floor(raw[i]!)
+  })
+  let left = 100 - LEVELS.reduce((n, l) => n + out[l], 0)
+  const order = LEVELS.map((l, i) => ({ l, r: raw[i]! - Math.floor(raw[i]!) })).sort((a, b) => b.r - a.r)
+  for (const { l } of order) {
+    if (left <= 0) break
+    out[l] += 1
+    left -= 1
+  }
+  return out
+}
