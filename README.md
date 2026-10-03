@@ -24,7 +24,9 @@ printf 'TYPESAFE_API_KEY=your-key\nTYPESAFE_MODEL=jev-latest\n' > ~/.config/jeff
 
 ## Usage
 
-- `/jeffort` toggles it. `/jeffort on`, `off`, `pane` and `reset` also work.
+- `/jeffort` toggles it. `/jeffort on`, `off` and `pane` also work.
+- `/jeffort reset` clears this session's and this project's totals; `/jeffort reset all` clears every project and the overall total.
+- Totals are kept for this session, this project and all projects. A project is the session's project root, keyed by its full path, so two folders with the same name stay separate. A git worktree counts as its own project.
 - **Appearance** tab: Default, Signal, Mono, Colour-safe, Retro, or Match terminal.
 - Settings (`/config`): the lowest and highest level Jeffort may pick. `max` is off by default.
 
@@ -32,7 +34,7 @@ printf 'TYPESAFE_API_KEY=your-key\nTYPESAFE_MODEL=jev-latest\n' > ~/.config/jeff
 
 Jeffort only rewrites effort on Opus 5.5, Sonnet 5.5 and Fable 5.1, with an API key or a Claude subscription. Those are the models where Claude Code keeps the prompt cache across effort changes. Anywhere else (Bedrock, Vertex, a Claude apps gateway, older models) it does nothing. Needs Claude Code 2.1.284 or later.
 
-Measured on Opus 5.5: the first effort change in a conversation rebuilds about 22k tokens of cache, once. Later changes keep it. That one-time cost is subtracted from the savings the band shows.
+Measured on Opus 5.5: the first effort change in a conversation rebuilds about 22k tokens of cache, once. Later changes keep it. That one-time cost is subtracted from the savings the band shows. Jeffort spots it as a large cache write on the first request of a turn whose level changed, so it is an estimate too: a compaction on such a turn can look the same.
 
 ## What the savings numbers are
 

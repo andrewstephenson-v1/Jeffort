@@ -50,6 +50,27 @@ export const assistantOf = (model: string): { name: string; description?: string
 export const isLevel = (v: unknown): v is Level => LEVELS.includes(v as Level)
 
 /**
+ * Whether Jeffort starts a session on. The `enabled` setting set to false wins; otherwise the last
+ * `/jeffort` toggle stands, and a first run is on.
+ */
+export function initialEnabled(stored: unknown, configured: unknown): boolean {
+  if (configured === false) return false
+  return typeof stored === 'boolean' ? stored : true
+}
+
+/** Store keys for per-project totals start with this; the rest is the project root in full. */
+export const PROJECT_KEY_PREFIX = 'project:'
+
+/** A project's store key: its full root path, so two folders with the same name never merge. */
+export const projectKey = (root: string): string => `${PROJECT_KEY_PREFIX}${root}`
+
+/** A project's display name: the last segment of its root. */
+export function projectName(root: string): string {
+  const parts = root.split(/[\\/]+/).filter(Boolean)
+  return parts[parts.length - 1] ?? root
+}
+
+/**
  * Four narrow judgments about a request, each scored on its own ordered scale and combined in
  * code (TypeSafe's composite-scoring pattern). They describe situations, not subjects, so they
  * work for any request to an assistant: code, writing, analysis, planning. Levels run from
@@ -205,8 +226,9 @@ export const cacheWritePrice = (model: string): number | undefined =>
 
 /**
  * Measured: the first effort change after a conversation starts rebuilds the conversation
- * cache once (about 22k tokens); later changes keep it. A cache write above this on a turn
- * whose level differs from the previous turn's is counted as that rebuild.
+ * cache once (about 22k tokens); later changes keep it. A cache write above this on the first
+ * request of a turn whose level differs from the previous turn's is counted as that rebuild.
+ * Only the first request counts: later ones in a tool loop write tool results to the cache.
  */
 export const REBUILD_MIN_TOKENS = 10000
 

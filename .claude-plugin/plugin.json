@@ -10,7 +10,7 @@
     "enabled": {
       "type": "boolean",
       "title": "Automatic effort",
-      "description": "Choose the effort level for each turn from Jev's score. Off leaves your /effort setting alone.",
+      "description": "Choose the effort level for each turn from Jev's score. Off leaves your /effort setting alone and starts every session off, whatever /jeffort last set; /jeffort on still works for that session.",
       "default": true
     },
     "ceiling": {

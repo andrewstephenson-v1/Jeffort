@@ -30,6 +30,9 @@ export type TurnLog = {
   dims: Record<string, number>
 }
 
+/** The current project's totals across sessions, kept in the store under its full root path. */
+export type Project = { root: string; name: string; stats: Stats } | null
+
 export type PaneTab = 'stats' | 'look'
 
 declare module 'claude-code' {
@@ -38,6 +41,7 @@ declare module 'claude-code' {
       enabled: boolean
       stats: Stats
       lifetime: Stats
+      project: Project
       last: Last
       theme: string
       barStyle: string
