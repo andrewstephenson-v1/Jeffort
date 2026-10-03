@@ -1,6 +1,6 @@
 import { test, expect } from 'claude-code/testing'
 
-import { allowedLevels, buildRequest, cleanPrompt, decide, isCacheSafeModel } from '../hooks/policy'
+import { allowedLevels, assistantOf, buildRequest, cleanPrompt, decide, isCacheSafeModel, isSupportedVersion } from '../hooks/policy'
 
 const dims = (score: number, confidence: number) => ({
   answers: Object.fromEntries(['depth', 'scope', 'stakes', 'ambiguity'].map((d) => [d, { score, confidence }])),
@@ -12,6 +12,22 @@ test('only cache-safe models are touched', () => {
   expect(isCacheSafeModel('claude-fable-5-1')).toBe(true)
   expect(isCacheSafeModel('claude-opus-5')).toBe(false)
   expect(isCacheSafeModel('claude-haiku-4-5-20251001')).toBe(false)
+})
+
+test('only Claude Code 2.1.284 or later is supported', () => {
+  expect(isSupportedVersion('2.1.284')).toBe(true)
+  expect(isSupportedVersion('2.1.288-dev')).toBe(true)
+  expect(isSupportedVersion('2.2.0')).toBe(true)
+  expect(isSupportedVersion('2.1.283')).toBe(false)
+  expect(isSupportedVersion('1.9.999')).toBe(false)
+  expect(isSupportedVersion(undefined)).toBe(false)
+  expect(isSupportedVersion('nightly')).toBe(false)
+})
+
+test('Jev is told which model answers, with a description where we have one', () => {
+  expect(assistantOf('claude-opus-5-5[1m]').name).toBe('Claude Opus 5.5')
+  expect(assistantOf('claude-sonnet-5-5').description).toContain('less capable than Opus')
+  expect(assistantOf('claude-unknown')).toEqual({ name: 'claude-unknown' })
 })
 
 test('levels run floor to ceiling and tolerate bad input', () => {
@@ -51,11 +67,13 @@ test('low confidence or a missing dimension keeps the session effort', () => {
 })
 
 test('request sends only the prompt and four narrow questions', () => {
-  const req = buildRequest('plan a trip to Japan') as {
-    state: unknown
+  const req = buildRequest('plan a trip to Japan', 'claude-sonnet-5-5') as {
+    state: { request: string; assistant: { name: string } }
     questions: Record<string, { type: string; criteria: string[] }>
   }
-  expect(req.state).toEqual({ request: 'plan a trip to Japan' })
+  expect(Object.keys(req.state)).toEqual(['request', 'assistant'])
+  expect(req.state.request).toBe('plan a trip to Japan')
+  expect(req.state.assistant.name).toBe('Claude Sonnet 5.5')
   expect(Object.keys(req.questions)).toEqual(['depth', 'scope', 'stakes', 'ambiguity'])
   for (const q of Object.values(req.questions)) {
     expect(q.type).toBe('score')

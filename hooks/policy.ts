@@ -15,6 +15,38 @@ export const MIN_CONFIDENCE = 0.3
 
 export const isCacheSafeModel = (model: string): boolean => CACHE_SAFE_MODEL.test(model)
 
+/** Oldest Claude Code release that keeps the prompt cache across effort changes. */
+export const MIN_CLAUDE_CODE = '2.1.284'
+
+/**
+ * Whether a Claude Code release (`2.1.288`, or `2.1.288-dev` for a development build) is at least
+ * MIN_CLAUDE_CODE. An unknown or unparseable version is unsupported, so Jeffort does nothing.
+ */
+export function isSupportedVersion(base: string | undefined): boolean {
+  const parse = (v: string) => /^(\d+)\.(\d+)\.(\d+)/.exec(v)?.slice(1).map(Number)
+  const have = base ? parse(base) : undefined
+  const need = parse(MIN_CLAUDE_CODE)!
+  if (!have) return false
+  for (let i = 0; i < 3; i++) if (have[i] !== need[i]) return have[i]! > need[i]!
+  return true
+}
+
+/**
+ * How Jev is told which assistant will answer, so depth and scope are judged for that model.
+ * A description rather than a bare name: Jev cannot be relied on to know new models.
+ */
+const ASSISTANTS: Array<[RegExp, { name: string; description?: string }]> = [
+  [/opus-5-5/, { name: 'Claude Opus 5.5', description: 'The largest, most capable Claude model.' }],
+  [
+    /sonnet-5-5/,
+    { name: 'Claude Sonnet 5.5', description: 'A mid-size Claude model: fast and strong, but less capable than Opus on hard problems.' },
+  ],
+  [/fable-5-1/, { name: 'Claude Fable 5.1' }],
+]
+
+export const assistantOf = (model: string): { name: string; description?: string } =>
+  ASSISTANTS.find(([re]) => re.test(model))?.[1] ?? { name: model }
+
 export const isLevel = (v: unknown): v is Level => LEVELS.includes(v as Level)
 
 /**
@@ -26,7 +58,9 @@ export const isLevel = (v: unknown): v is Level => LEVELS.includes(v as Level)
 const DIMENSIONS = {
   depth: {
     weight: 0.45,
-    instructions: 'How much step-by-step reasoning does an AI assistant need to get this request right? The request can be about any subject.',
+    instructions:
+      'How much step-by-step reasoning does the assistant described in `assistant` need to get this request right? ' +
+      'A more capable assistant needs less for the same request. The request can be about any subject.',
     criteria: [
       'The answer comes straight from recall or one obvious step: a fact, a definition, a rewording, a simple conversion.',
       'A few straightforward steps with nothing tricky: apply a known method, draft routine text, follow clear instructions.',
@@ -36,7 +70,9 @@ const DIMENSIONS = {
   },
   scope: {
     weight: 0.2,
-    instructions: 'How much material, or how many interrelated parts, must the assistant take into account to answer this request?',
+    instructions:
+      'How much material, or how many interrelated parts, must the assistant described in `assistant` take into ' +
+      'account to answer this request?',
     criteria: [
       'One self-contained item; no outside context is needed.',
       'A single piece of work with a few parts that do not affect each other.',
@@ -84,11 +120,14 @@ type JevRequest = {
   questions: Record<string, unknown>
 }
 
-/** Only the request goes to Jev: nothing about the session, the model or earlier turns. */
-export function buildRequest(prompt: string, model = 'jev-latest'): JevRequest {
+/**
+ * Only the request and which Claude model will answer it go to Jev: nothing about the session or
+ * earlier turns.
+ */
+export function buildRequest(prompt: string, assistantModel: string, model = 'jev-latest'): JevRequest {
   return {
     model,
-    state: { request: prompt },
+    state: { request: prompt, assistant: assistantOf(assistantModel) },
     questions: Object.fromEntries(
       DIMENSION_NAMES.map((d) => [
         d,
@@ -128,7 +167,9 @@ export function decide(body: unknown, levels: readonly Level[]): Decision {
   }
   if (confidence < MIN_CONFIDENCE) return { level: null, reason: 'low-confidence' }
   const index = Math.round(composite * (levels.length - 1))
-  return { level: levels[index], score: composite, confidence, dims }
+  const level = levels[index]
+  if (!level) return { level: null, reason: 'no-levels' }
+  return { level, score: composite, confidence, dims }
 }
 
 /** The prompt as a router should see it: Claude Code's injected reminders removed. */
