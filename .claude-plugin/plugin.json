@@ -1,0 +1,44 @@
+{
+  "name": "jeffort",
+  "version": "0.1.0",
+  "description": "Jeffort scores each prompt with TypeSafe Jev and sets Claude's effort level for the turn, never touching the model",
+  "author": {
+    "name": "Andrew Stephenson"
+  },
+  "license": "MIT",
+  "userConfig": {
+    "enabled": {
+      "type": "boolean",
+      "title": "Automatic effort",
+      "description": "Choose the effort level for each turn from Jev's score. Off leaves your /effort setting alone.",
+      "default": true
+    },
+    "ceiling": {
+      "type": "string",
+      "title": "Highest effort to use",
+      "description": "Jev never picks above this level. max is off by default because it costs the most tokens.",
+      "default": "xhigh",
+      "options": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "floor": {
+      "type": "string",
+      "title": "Lowest effort to use",
+      "description": "Jev never picks below this level.",
+      "default": "low",
+      "options": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    }
+  },
+  "types": "./types/index.d.ts"
+}

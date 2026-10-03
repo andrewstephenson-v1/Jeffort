@@ -1,0 +1,1 @@
+Write a small arithmetic expression evaluator in solution.py (no eval, exec or ast). The docstring has the rules and test_solution.py has the cases.

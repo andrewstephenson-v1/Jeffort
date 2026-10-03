@@ -1,0 +1,348 @@
+<title>Jeffort Band Designs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+  /* Layout: a review sheet. Each option is a labelled specimen: a terminal strip, then what it
+     optimises and what it costs. Terminal strips keep one dark look in both page themes, the way
+     a screenshot would. */
+  :root {
+    --bg: #f2f5f3;
+    --surface: #ffffff;
+    --fg: #14201c;
+    --muted: #55655f;
+    --line: #d6dfda;
+    --accent: #0b6e63;
+    --accent-ink: #ffffff;
+    --good: #1f7a4d;
+    --warn: #8a5a00;
+
+    --t-bg: #0b100e;
+    --t-fg: #d9e4df;
+    --t-dim: #7f9089;
+    --t-line: #1d2926;
+    --t-used: #5b8def;
+    --t-saved: #3fbf7f;
+    --t-over: #e5b43c;
+    --t-rebuild: #a98bfa;
+    --t-btn: #1f2c28;
+    --t-btn-fg: #e6f0ec;
+    --t-low: #8fd3b6;
+    --t-medium: #5b8def;
+    --t-high: #e5b43c;
+    --t-xhigh: #ef7a6a;
+
+    --display: 'Familjen Grotesk', 'Helvetica Neue', Arial, sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d1412;
+      --surface: #141e1b;
+      --fg: #e4eee9;
+      --muted: #94a69f;
+      --line: #25322e;
+      --accent: #35d1b0;
+      --accent-ink: #052b24;
+      --good: #5fd39a;
+      --warn: #e5b43c;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1412;
+    --surface: #141e1b;
+    --fg: #e4eee9;
+    --muted: #94a69f;
+    --line: #25322e;
+    --accent: #35d1b0;
+    --accent-ink: #052b24;
+    --good: #5fd39a;
+    --warn: #e5b43c;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--display);
+    font-size: 16px;
+    line-height: 1.5;
+    padding-inline: 16px;
+    padding-block: 32px 64px;
+  }
+  main { max-width: 920px; margin-inline: auto; display: grid; gap: 40px; }
+  h1, h2, h3 { font-weight: 700; line-height: 1.15; text-wrap: balance; margin: 0; }
+  h1 { font-size: clamp(2rem, 5vw, 3rem); letter-spacing: -0.02em; }
+  h2 { font-size: 1.5rem; letter-spacing: -0.01em; }
+  h3 { font-size: 1.05rem; }
+  p { margin: 0; max-width: 65ch; }
+  .muted { color: var(--muted); }
+  .eyebrow { font-size: 0.75rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+
+  header { display: grid; gap: 14px; }
+  .facts { display: flex; flex-wrap: wrap; gap: 10px 24px; font-family: var(--mono); font-size: 0.8rem; color: var(--muted); }
+  .facts b { color: var(--fg); font-weight: 600; }
+
+  .rec {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px;
+    display: grid;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .option { display: grid; gap: 14px; min-width: 0; }
+  .option-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+  .option-head .tag { font-family: var(--mono); font-size: 0.8rem; color: var(--accent); font-weight: 600; }
+  .trade { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 28px; }
+  .trade div { min-width: 0; }
+  .trade dt { font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin-bottom: 2px; }
+  .trade dd { margin: 0; font-size: 0.95rem; }
+
+  /* ---------- terminal strip ---------- */
+  .term {
+    background: var(--t-bg);
+    color: var(--t-fg);
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 20px;
+    border-radius: 8px;
+    border: 1px solid var(--t-line);
+    padding: 10px 14px;
+    overflow-x: auto;
+    min-width: 0;
+  }
+  .term .row { display: flex; align-items: center; gap: 1.2ch; white-space: pre; min-height: 20px; }
+  .term .dim { color: var(--t-dim); }
+  .term .prompt { color: var(--t-dim); border-top: 1px solid var(--t-line); margin-top: 8px; padding-top: 8px; white-space: pre; }
+  .term .on { color: var(--t-saved); }
+  .term .warn { color: var(--t-over); }
+  .term .btn {
+    font: inherit; color: var(--t-btn-fg); background: var(--t-btn);
+    border: 0; border-radius: 3px; padding: 0 1ch; height: 20px; cursor: pointer;
+  }
+  .term .btn:hover { background: #2a3a35; }
+  .term .btn:focus-visible { outline: 2px solid var(--t-saved); outline-offset: 1px; }
+
+  .bar { display: flex; height: 20px; flex: 1 1 auto; min-width: 12ch; gap: 0; }
+  .bar.fixed { flex: 0 0 22ch; }
+  .bar > i { display: block; height: 100%; min-width: 1ch; }
+  .used { background: var(--t-used); }
+  .saved { background: var(--t-saved); }
+  .over { background: var(--t-over); }
+  .rebuild {
+    background: repeating-linear-gradient(135deg, var(--t-rebuild) 0 3px, #5e4aa8 3px 6px);
+  }
+  .key { display: inline-block; width: 1ch; height: 1ch; margin-right: 0.8ch; vertical-align: baseline; }
+
+  .tape { letter-spacing: 0.1ch; font-size: 15px; }
+  .tape .low { color: var(--t-low); }
+  .tape .medium { color: var(--t-medium); }
+  .tape .high { color: var(--t-high); }
+  .tape .xhigh { color: var(--t-xhigh); }
+
+  .hist { display: grid; grid-template-columns: 7ch 1fr 4ch; gap: 0 1.2ch; align-items: center; min-height: 20px; }
+  .hist .b { height: 12px; border-radius: 1px; }
+  .hist .low { background: var(--t-low); }
+  .hist .medium { background: var(--t-medium); }
+  .hist .high { background: var(--t-high); }
+  .hist .xhigh { background: var(--t-xhigh); }
+  .hist .now { color: var(--t-saved); }
+
+  .state-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+  .state { display: grid; gap: 6px; min-width: 0; }
+  .state .label { font-size: 0.75rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+
+  .term .when-off { display: none; }
+  .term.is-off .when-on { display: none; }
+  .term.is-off .when-off { display: flex; }
+
+  .term .expand { display: none; }
+  .term.is-open .expand { display: block; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.8rem; color: var(--muted); font-family: var(--mono); }
+
+  footer { border-top: 1px solid var(--line); padding-top: 20px; display: grid; gap: 8px; }
+  @media (prefers-reduced-motion: no-preference) { .term .btn { transition: background 0.12s; } }
+</style>
+
+<main>
+  <header>
+    <span class="eyebrow">Jeffort · UI options</span>
+    <h1>Where the savings show up</h1>
+    <p class="muted">Jeffort sets the effort level for each turn from Jev's score, never touching the model. Six ways to put its status, its toggle and the session's estimated saving above the prompt. Every strip below is drawn with the same pieces the mod can use in a terminal today: rows of text, filled boxes sized by weight, and buttons.</p>
+    <div class="facts">
+      <span>Example session <b>11 turns</b></span>
+      <span>Baseline <b>xhigh</b></span>
+      <span>Output used <b>12.4k</b></span>
+      <span>Saved (est.) <b>21.9k</b></span>
+      <span>Cache rebuilt once <b>21.8k</b></span>
+      <span>Net <b>+$0.26</b></span>
+    </div>
+  </header>
+
+  <section class="rec" aria-labelledby="rec-h">
+    <span class="eyebrow">Recommendation</span>
+    <h2 id="rec-h">Option 2 by default, Option 5 when you press it</h2>
+    <p>One quiet line costs a single row above the prompt, and it carries the three things you act on: the current level, whether it is on, and what it has saved. Pressing the savings expands the cost receipt, which is the only view that shows the one-time cache rebuild eating into the saving. That matters: early in a session the net can be negative, and a bar that hides it would overstate the benefit.</p>
+  </section>
+
+  <!-- ===== 1 ===== -->
+  <section class="option" id="o1">
+    <div class="option-head"><span class="tag">Option 1</span><h2>Ledger</h2><span class="muted">what is built today</span></div>
+    <div class="term mock" data-mock>
+      <div class="row"><span class="dim when-on">Auto effort on · last low (was xhigh)</span><span class="dim when-off">Auto effort off</span><button class="btn" data-toggle></button></div>
+      <div class="when-on">
+        <div class="row"><div class="bar"><i class="used" style="flex:12.4"></i><i class="saved" style="flex:21.9"></i></div></div>
+        <div class="row dim">this session, est.: used 12.4k · saved 21.9k output tokens · net ~$0.26 after 21.8k cache rebuilt</div>
+      </div>
+      <div class="prompt">&gt; </div>
+    </div>
+    <dl class="trade">
+      <div><dt>Optimises</dt><dd>Showing the whole picture at once: level, toggle, bar and net.</dd></div>
+      <div><dt>Costs</dt><dd>Three rows above the prompt, permanently. The bar and the legend repeat each other.</dd></div>
+    </dl>
+  </section>
+
+  <!-- ===== 2 ===== -->
+  <section class="option" id="o2">
+    <div class="option-head"><span class="tag">Option 2</span><h2>Single line</h2><span class="muted">recommended default</span></div>
+    <div class="term mock" data-mock>
+      <div class="row when-on"><span class="on">●</span><span>Jeffort</span><span>low</span><span class="dim">← xhigh</span><div class="bar fixed"><i class="used" style="flex:12.4"></i><i class="saved" style="flex:21.9"></i></div><span>−64%</span><span class="dim">net</span><span class="on">+$0.26</span><button class="btn" data-toggle></button></div>
+      <div class="row when-off"><span class="dim">○</span><span class="dim">Jeffort off · your effort setting applies</span><button class="btn" data-toggle></button></div>
+      <div class="prompt">&gt; </div>
+    </div>
+    <dl class="trade">
+      <div><dt>Optimises</dt><dd>A footprint of one row. The percentage is output tokens used against the estimate at your own effort.</dd></div>
+      <div><dt>Costs</dt><dd>No breakdown. Short terminals may drop the bar first, then the percentage.</dd></div>
+    </dl>
+  </section>
+
+  <!-- ===== 3 ===== -->
+  <section class="option" id="o3">
+    <div class="option-head"><span class="tag">Option 3</span><h2>Turn tape</h2><span class="muted">one glyph per turn</span></div>
+    <div class="term mock" data-mock>
+      <div class="row when-on"><span class="on">●</span><span>Jeffort</span><span class="tape"><span class="low">▁</span><span class="high">▅</span><span class="low">▁</span><span class="low">▁</span><span class="medium">▃</span><span class="high">▅</span><span class="low">▁</span><span class="medium">▃</span><span class="medium">▃</span><span class="high">▅</span><span class="low">▁</span></span><span class="dim">baseline xhigh ▇</span><span class="dim">·</span><span>saved 21.9k</span><span class="on">+$0.26</span><button class="btn" data-toggle></button></div>
+      <div class="row when-off"><span class="dim">○</span><span class="dim">Jeffort off</span><button class="btn" data-toggle></button></div>
+      <div class="prompt">&gt; </div>
+    </div>
+    <div class="legend"><span><span class="key" style="background:var(--t-low)"></span>low ▁</span><span><span class="key" style="background:var(--t-medium)"></span>medium ▃</span><span><span class="key" style="background:var(--t-high)"></span>high ▅</span><span><span class="key" style="background:var(--t-xhigh)"></span>xhigh ▇</span></div>
+    <dl class="trade">
+      <div><dt>Optimises</dt><dd>Seeing what it actually did: the tape shows each turn's level, so a run of high turns is visible straight away.</dd></div>
+      <div><dt>Costs</dt><dd>Needs a few seconds of learning. Block glyphs vary slightly by terminal font. The tape grows, so it keeps the last 16 turns.</dd></div>
+    </dl>
+  </section>
+
+  <!-- ===== 4 ===== -->
+  <section class="option" id="o4">
+    <div class="option-head"><span class="tag">Option 4</span><h2>Effort mix</h2><span class="muted">where the turns landed</span></div>
+    <div class="term mock" data-mock>
+      <div class="row when-on"><span class="on">●</span><span>Jeffort</span><span class="dim">now</span><span class="on">low</span><span class="dim">· baseline xhigh · saved 21.9k · net</span><span class="on">+$0.26</span><button class="btn" data-toggle></button></div>
+      <div class="row when-off"><span class="dim">○</span><span class="dim">Jeffort off</span><button class="btn" data-toggle></button></div>
+      <div class="when-on">
+        <div class="hist"><span class="dim">low</span><span><span class="b low" style="display:block;width:45%"></span></span><span class="dim">5</span></div>
+        <div class="hist"><span class="dim">medium</span><span><span class="b medium" style="display:block;width:27%"></span></span><span class="dim">3</span></div>
+        <div class="hist"><span class="dim">high</span><span><span class="b high" style="display:block;width:27%"></span></span><span class="dim">3</span></div>
+        <div class="hist"><span class="dim">xhigh</span><span><span class="b xhigh" style="display:block;width:1%"></span></span><span class="dim">0</span></div>
+      </div>
+      <div class="prompt">&gt; </div>
+    </div>
+    <dl class="trade">
+      <div><dt>Optimises</dt><dd>Trust. If every turn lands on high, you can see Jev is not discriminating, and tune the floor.</dd></div>
+      <div><dt>Costs</dt><dd>Five rows, and the savings are a sentence rather than a graphic. Better as a panel than a permanent band.</dd></div>
+    </dl>
+  </section>
+
+  <!-- ===== 5 ===== -->
+  <section class="option" id="o5">
+    <div class="option-head"><span class="tag">Option 5</span><h2>Cost receipt</h2><span class="muted">the honest view, shown on press</span></div>
+    <div class="term mock" data-mock>
+      <div class="row when-on"><span class="on">●</span><span>Jeffort</span><span>low</span><span class="dim">← xhigh</span><span class="dim">·</span><span>would have cost</span><span>$0.69</span><button class="btn" data-toggle></button></div>
+      <div class="row when-off"><span class="dim">○</span><span class="dim">Jeffort off</span><button class="btn" data-toggle></button></div>
+      <div class="when-on">
+        <div class="row"><div class="bar"><i class="used" style="flex:0.248"></i><i class="rebuild" style="flex:0.174"></i><i class="saved" style="flex:0.264"></i></div></div>
+        <div class="row legend" style="color:var(--t-dim)"><span><span class="key used"></span>paid $0.25</span><span><span class="key rebuild"></span>rebuild −$0.17 (once)</span><span><span class="key saved"></span>kept +$0.26</span></div>
+      </div>
+      <div class="prompt">&gt; </div>
+    </div>
+    <dl class="trade">
+      <div><dt>Optimises</dt><dd>Honesty. Dollars on one axis, so the one-time cache rebuild is visibly taken out of the saving rather than footnoted.</dd></div>
+      <div><dt>Costs</dt><dd>Output tokens only on Opus 5.5 and Sonnet 5.5, the models with known prices, so it is unavailable on Fable 5.1 (tokens only there). The dollar figure rests on estimated level ratios.</dd></div>
+    </dl>
+  </section>
+
+  <!-- ===== 6 ===== -->
+  <section class="option" id="o6">
+    <div class="option-head"><span class="tag">Option 6</span><h2>Chip that opens</h2><span class="muted">least visible, one press from the detail</span></div>
+    <div class="term mock is-collapsible" data-mock data-collapsible>
+      <div class="row when-on"><span class="on">●</span><span>low</span><button class="btn" data-expand>+$0.26 ▸</button><button class="btn" data-toggle></button></div>
+      <div class="row when-off"><span class="dim">○</span><span class="dim">off</span><button class="btn" data-toggle></button></div>
+      <div class="expand">
+        <div class="row"><div class="bar"><i class="used" style="flex:12.4"></i><i class="saved" style="flex:21.9"></i></div></div>
+        <div class="row dim">used 12.4k · saved 21.9k · rebuilt 21.8k cache · baseline xhigh</div>
+      </div>
+      <div class="prompt">&gt; </div>
+    </div>
+    <dl class="trade">
+      <div><dt>Optimises</dt><dd>Staying out of the way. Closest to a normal status line, and the net figure is the only number shown.</dd></div>
+      <div><dt>Costs</dt><dd>The bar you asked for is hidden until pressed, so the saving is easy to forget about.</dd></div>
+    </dl>
+  </section>
+
+  <!-- ===== States ===== -->
+  <section class="option" id="states">
+    <div class="option-head"><h2>States for the recommended line</h2></div>
+    <p class="muted">Option 2 in the situations a user will actually hit. Each one says what it will do next, not only what is wrong.</p>
+    <div class="state-grid">
+      <div class="state"><span class="label">First turn, nothing to show yet</span>
+        <div class="term"><div class="row"><span class="on">●</span><span>Jeffort</span><span class="dim">waiting for a turn · baseline xhigh</span><button class="btn" type="button">Turn off</button></div></div></div>
+      <div class="state"><span class="label">Early session: rebuild not yet earned back</span>
+        <div class="term"><div class="row"><span class="on">●</span><span>Jeffort</span><span>low</span><span class="dim">← xhigh</span><div class="bar fixed"><i class="used" style="flex:3.1"></i><i class="saved" style="flex:5.2"></i></div><span class="dim">net</span><span class="warn">−$0.07</span></div></div></div>
+      <div class="state"><span class="label">Jev picked higher than your baseline</span>
+        <div class="term"><div class="row"><span class="on">●</span><span>Jeffort</span><span>max</span><span class="dim">← high</span><div class="bar fixed"><i class="used" style="flex:9"></i><i class="over" style="flex:2.5"></i></div><span class="warn">+2.5k extra</span></div></div></div>
+      <div class="state"><span class="label">Model keeps no cache on effort changes</span>
+        <div class="term"><div class="row"><span class="dim">○</span><span class="dim">Jeffort idle · Haiku 4.5 rebuilds its cache when effort changes</span></div></div></div>
+      <div class="state"><span class="label">No API key</span>
+        <div class="term"><div class="row"><span class="warn">●</span><span>Jeffort</span><span class="warn">no TYPESAFE_API_KEY in .env</span><span class="dim">· your effort applies</span></div></div></div>
+      <div class="state"><span class="label">Jev unreachable or unsure</span>
+        <div class="term"><div class="row"><span class="on">●</span><span>Jeffort</span><span class="dim">kept xhigh (low-confidence) · 3 of 11 turns</span></div></div></div>
+    </div>
+  </section>
+
+  <footer>
+    <h3>About the name</h3>
+    <p class="muted">Jeffort reads as Jev plus effort, and says what the mod does in one word. If you rename, the plugin name, the slash command (<code>/auto-effort</code> would become <code>/jeffort</code>), the stored settings key and the <code>.claude-plugin</code> manifest all change together, and the lifetime totals saved under the old key would be orphaned unless migrated.</p>
+    <p class="muted">Figures in these strips are an example session, not measured output. The saving is estimated from fixed per-level output ratios taken from the benchmark in <code>bench/</code>.</p>
+  </footer>
+</main>
+
+<script>
+  document.querySelectorAll('[data-mock]').forEach(function (mock) {
+    function label() {
+      mock.querySelectorAll('[data-toggle]').forEach(function (b) {
+        b.textContent = mock.classList.contains('is-off') ? 'Turn on' : 'Turn off';
+      });
+    }
+    label();
+    mock.querySelectorAll('[data-toggle]').forEach(function (b) {
+      b.type = 'button';
+      b.addEventListener('click', function () {
+        mock.classList.toggle('is-off');
+        mock.classList.remove('is-open');
+        label();
+      });
+    });
+    var ex = mock.querySelector('[data-expand]');
+    if (ex) {
+      ex.type = 'button';
+      ex.addEventListener('click', function () {
+        var open = mock.classList.toggle('is-open');
+        ex.textContent = open ? '+$0.26 ▾' : '+$0.26 ▸';
+      });
+    }
+  });
+</script>
