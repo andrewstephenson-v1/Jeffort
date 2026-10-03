@@ -7,7 +7,7 @@
       "name": "jeffort",
       "source": "./",
       "description": "Scores each prompt with TypeSafe Jev and sets Claude's effort level for the turn, never touching the model",
-      "version": "0.7.0"
+      "version": "0.7.1"
     }
   ]
 }

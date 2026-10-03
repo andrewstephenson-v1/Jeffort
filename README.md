@@ -13,12 +13,28 @@ claude plugin install jeffort@jeffort --scope user
 
 To try a local clone for one session instead: `claude --plugin-dir /path/to/Jeffort`.
 
-Put your TypeSafe key in a `.env` file. Jeffort looks, in order, at process variables, `.env` beside the plugin, then `~/.config/jeffort/.env`. An installed copy runs from Claude Code's plugin cache, so use the last one:
+## Where the key goes
+
+Jeffort needs a [TypeSafe](https://docs.typesafe.ai) API key. Put it in a file in your home folder:
 
 ```sh
 mkdir -p ~/.config/jeffort
 printf 'TYPESAFE_API_KEY=your-key\nTYPESAFE_MODEL=jev-latest\n' > ~/.config/jeffort/.env
 ```
+
+Jeffort looks in these places, in order, and takes the first value it finds for each variable:
+
+1. Process variables (`TYPESAFE_API_KEY`, `TYPESAFE_MODEL`).
+2. `.env` or `jeffort.env` in the plugin's own folder.
+3. `.env` or `jeffort.env` in `~/.config/jeffort/`.
+
+Three things that catch people out:
+
+- **Your project's `.env` is not read.** Jeffort never opens files in the project you are working on, because they often hold unrelated secrets. Copy just the TypeSafe lines across: `grep '^TYPESAFE_' /path/to/project/.env > ~/.config/jeffort/.env`.
+- **A `.env` beside the plugin only helps with `--plugin-dir`.** An installed copy runs from Claude Code's plugin cache, which is not your clone, so a gitignored `.env` in the repo is not there. Use the home-folder file.
+- **If Claude Code's permission rules block reading `.env` files** (for example a `Read(**/.env)` deny rule), name the file `jeffort.env` instead. This is untested on a machine with such a rule, so tell me if it does not help.
+
+If a turn shows `Jeffort: no TYPESAFE_API_KEY found`, none of those places had a key. Check with `grep -c '^TYPESAFE_API_KEY=.' ~/.config/jeffort/.env`, which should print 1. Jeffort rereads the files on each turn until it finds a key, so a fix applies on your next prompt with no reload.
 
 `TYPESAFE_MODEL` is optional and defaults to `jev-latest`. Prompts are sent to TypeSafe for scoring, with the name of the Claude model that will answer (so Jev can judge how much effort that model needs), and nothing else is.
 
