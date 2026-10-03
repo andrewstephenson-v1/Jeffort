@@ -272,6 +272,9 @@ export const register: Register = (on, options) => {
   let previousLevel: Level | null = null
   // Whether this Claude Code keeps the prompt cache across effort changes; older ones never call Jev.
   let supportedVersion = false
+  // Whether the session talks to Anthropic directly (an API key or a Claude subscription). Behind
+  // Bedrock, Vertex or a gateway the cache may not survive an effort change, so Jeffort stays out.
+  let firstParty = true
 
   on('session.start', async ($, e, next) => {
     try {
@@ -280,6 +283,13 @@ export const register: Register = (on, options) => {
       supportedVersion = false
     }
     if (!supportedVersion) $.ui.status(`Jeffort: needs Claude Code ${MIN_CLAUDE_CODE} or later; off`)
+    try {
+      firstParty = (await $.session.authorize()) !== null
+    } catch {
+      // a build without session.authorize: the version gate alone decides, as before
+      firstParty = true
+    }
+    if (supportedVersion && !firstParty) $.ui.status('Jeffort: needs an Anthropic API key or Claude subscription; off')
     let s: { enabled?: boolean; stats?: Stats; theme?: string; barStyle?: string } | undefined
     try {
       s = ((await $.store.get(STORE_KEY)) ?? (await $.store.get(LEGACY_STORE_KEY))) as typeof s
@@ -344,9 +354,9 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.step', async function* ($, e, next) {
-    // Subagents keep their own effort, and models or Claude Code versions that would lose the
-    // cache are left alone: Jev is never called for them.
-    const skip = e.agentId || e.effort === undefined || !supportedVersion || !isCacheSafeModel(e.model)
+    // Subagents keep their own effort, and models, providers or Claude Code versions that would
+    // lose the cache are left alone: Jev is never called for them.
+    const skip = e.agentId || e.effort === undefined || !supportedVersion || !firstParty || !isCacheSafeModel(e.model)
     if (skip || !(await read($, enabled))) {
       return yield* next(e)
     }

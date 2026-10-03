@@ -20,7 +20,7 @@ const usage = (output: number, written: number): Usage => ({
  */
 function world(on: On, scoreOf: (prompt: string) => number) {
   const store = new Map<string, unknown>()
-  const w = { store, root: '/Users/a/Dev/alpha', asked: [] as string[], effort: new Map<string, unknown>(), firstWrite: 500 }
+  const w = { store, root: '/Users/a/Dev/alpha', asked: [] as string[], effort: new Map<string, unknown>(), firstWrite: 500, firstParty: true }
   on('store.get', async (_$, e) => ({ value: store.get(e.key) }))
   on('store.set', async (_$, e) => {
     store.set(e.key, e.value)
@@ -36,6 +36,7 @@ function world(on: On, scoreOf: (prompt: string) => number) {
   on('command.register', async () => ({ value: undefined }))
   on('ui.status', async () => ({ value: undefined }))
   on('session.version', async () => ({ value: { version: '2.1.290', base: '2.1.290' } }))
+  on('session.authorize', async () => ({ value: w.firstParty ? { handle: 'h', kind: 'api-key' as const } : null }))
   on('session.root', async () => ({ value: w.root }))
   on('env.get', async (_$, e) => ({ value: e.name === 'TYPESAFE_API_KEY' ? 'test-key' : undefined }))
   on('fs.read', async () => ({ deny: 'no such file' }))
@@ -99,6 +100,15 @@ test('each turn is scored on its own prompt, and continuations are not scored', 
   expect(w.effort.get('t1')).toBe('low')
   expect(w.effort.get('t2')).toBe('xhigh')
   expect(w.effort.get('t3')).toBe('high')
+})
+
+test('without a first-party credential (Bedrock, Vertex, a gateway) Jev is never called', async ($, on) => {
+  const w = world(on, () => 3)
+  w.firstParty = false
+  await start($, w)
+  await turn($, 'g1', 'hard')
+  expect(w.asked).toEqual([])
+  expect(w.effort.get('g1')).toBe('high')
 })
 
 test('a cache rebuild is read from the first request of a turn, not its total', async ($, on) => {
