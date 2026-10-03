@@ -30,7 +30,7 @@ CONDITIONS = ['low', 'medium', 'high', 'xhigh', 'auto']
 def done():
     if not os.path.exists(OUT):
         return set()
-    return {(r['id'], r['condition']) for r in map(json.loads, open(OUT))}
+    return {(r['id'], r['condition']) for r in map(json.loads, open(OUT)) if 'error' not in r}
 
 
 def run(pid, diff, prompt, pattern, cond):

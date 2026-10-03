@@ -116,11 +116,15 @@ export function decide(body: unknown, levels: readonly Level[]): Decision {
   const dims = {} as Dims
   for (const d of DIMENSION_NAMES) {
     const a = answers?.[d]
-    if (typeof a?.score !== 'number' || typeof a.confidence !== 'number') return { level: null, reason: 'no-answer' }
+    const score = a?.score
+    const conf = a?.confidence
+    if (typeof score !== 'number' || typeof conf !== 'number' || !Number.isFinite(score) || !Number.isFinite(conf)) {
+      return { level: null, reason: 'no-answer' }
+    }
     const w = DIMENSIONS[d].weight
-    dims[d] = a.score
-    composite += w * Math.min(1, Math.max(0, a.score / DIMENSION_MAX))
-    confidence += w * a.confidence
+    dims[d] = score
+    composite += w * Math.min(1, Math.max(0, score / DIMENSION_MAX))
+    confidence += w * conf
   }
   if (confidence < MIN_CONFIDENCE) return { level: null, reason: 'low-confidence' }
   const index = Math.round(composite * (levels.length - 1))
@@ -165,7 +169,7 @@ export const cacheWritePrice = (model: string): number | undefined =>
  */
 export const REBUILD_MIN_TOKENS = 10000
 
-export const outputPrice =(model: string): number | undefined => OUTPUT_PRICE.find(([re]) => re.test(model))?.[1]
+export const outputPrice = (model: string): number | undefined => OUTPUT_PRICE.find(([re]) => re.test(model))?.[1]
 
 /**
  * Estimated output tokens saved by running `chosen` instead of `baseline`, given the tokens

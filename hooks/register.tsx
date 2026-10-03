@@ -70,22 +70,32 @@ type Auth = { key: string; model: string }
 
 const DEFAULT_MODEL = 'jev-latest'
 
+/** `.env` values, cached once they hold a key so turns do not re-read the files. */
+let cachedVars: Record<string, string> | undefined
+
+/** Merges both `.env` files; where both set a variable, the one beside the plugin wins. */
+async function fileVars($: Engine): Promise<Record<string, string>> {
+  if (cachedVars) return cachedVars
+  const vars: Record<string, string> = {}
+  const home = await $.env.get('HOME')
+  for (const path of [`${$.plugin.root}/.env`, `${home}/.config/jeffort/.env`]) {
+    try {
+      for (const [k, v] of Object.entries(parseEnv(await $.fs.read(path)))) vars[k] ??= v
+    } catch {
+      // not there: try the next place
+    }
+  }
+  if (vars.TYPESAFE_API_KEY) cachedVars = vars
+  return vars
+}
+
 /**
  * Credentials come from process variables, then `.env` beside the plugin, then
  * `~/.config/jeffort/.env`. The last one is for an installed copy: Claude Code runs it from its
  * plugin cache, where a gitignored `.env` is not copied.
  */
 async function credentials($: Engine): Promise<Auth | undefined> {
-  let vars: Record<string, string> = {}
-  const home = await $.env.get('HOME')
-  for (const path of [`${$.plugin.root}/.env`, `${home}/.config/jeffort/.env`]) {
-    try {
-      vars = parseEnv(await $.fs.read(path))
-      if (vars.TYPESAFE_API_KEY) break
-    } catch {
-      // not there: try the next place
-    }
-  }
+  const vars = await fileVars($)
   const key = (await $.env.get('TYPESAFE_API_KEY')) || vars.TYPESAFE_API_KEY
   if (!key) return undefined
   return { key, model: (await $.env.get('TYPESAFE_MODEL')) || vars.TYPESAFE_MODEL || DEFAULT_MODEL }
@@ -93,14 +103,17 @@ async function credentials($: Engine): Promise<Auth | undefined> {
 
 async function score($: Engine, auth: Auth, prompt: string, levels: readonly Level[]) {
   const body = JSON.stringify(buildRequest(prompt, auth.model))
+  let timer: ReturnType<typeof setTimeout> | undefined
   const reply = await Promise.race([
     $.http.fetch(JEV_URL, {
       method: 'POST',
       headers: { authorization: `Bearer ${auth.key}`, 'content-type': 'application/json' },
       body,
     }),
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), JEV_TIMEOUT_MS)),
-  ])
+    new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), JEV_TIMEOUT_MS)
+    }),
+  ]).finally(() => clearTimeout(timer))
   if (!reply?.ok) return null
   return decide(JSON.parse(reply.text), levels)
 }
@@ -211,7 +224,8 @@ export const register: Register = (on, options) => {
   // What was chosen for each turn, so its tool-loop continuations reuse it (one Jev call per
   // turn) and turn.complete can price it.
   const picks = new Map<string, Pick>()
-  // Level applied on the previous main turn, to spot the one-time cache rebuild.
+  // Effort in effect on the previous main turn (applied or the session's own), to spot the
+  // one-time cache rebuild.
   let previousLevel: Level | null = null
 
   on('session.start', async ($, e, next) => {
@@ -306,14 +320,15 @@ export const register: Register = (on, options) => {
   on('turn.complete', async ($, e, next) => {
     const pick = picks.get(e.turnId)
     picks.delete(e.turnId)
+    const before = previousLevel
+    if (pick && !e.agentId) previousLevel = pick.level ?? pick.baseline ?? previousLevel
     if (pick?.level && !e.agentId && e.usage) {
       const out = e.usage.output_tokens
       const saved = pick.baseline ? estimateSaved(out, pick.level, pick.baseline) : 0
       const price = outputPrice(e.usage.model)
       const writePrice = cacheWritePrice(e.usage.model)
       const created = e.usage.cache_creation_input_tokens
-      const rebuilt = previousLevel && previousLevel !== pick.level && created > REBUILD_MIN_TOKENS ? created : 0
-      previousLevel = pick.level
+      const rebuilt = before && before !== pick.level && created > REBUILD_MIN_TOKENS ? created : 0
       const turn: Stats = {
         changed: pick.baseline && pick.baseline !== pick.level ? 1 : 0,
         applied: 1,
@@ -462,7 +477,7 @@ export const register: Register = (on, options) => {
     const s = await read($, stats)
     const all = await read($, lifetime)
     const log = await read($, turns)
-    const levels = mix(log.map((t) => t.level))
+    const levels = Object.fromEntries(LEVELS.map((l) => [l, sessionCounts[l] ?? 0])) as Record<Level, number>
     const peak = Math.max(1, ...Object.values(levels))
     const room = Math.max(3, rows - 18)
     const hasBar = s.applied > 0 && s.outputTokens + Math.abs(s.tokensSaved) > 0
