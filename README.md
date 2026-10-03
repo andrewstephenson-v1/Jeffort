@@ -13,11 +13,11 @@ claude plugin install jeffort@jeffort --scope user
 
 To try a local clone for one session instead: `claude --plugin-dir /path/to/Jeffort`.
 
-Put your TypeSafe key in a `.env` file. Jeffort looks, in order, at process variables, `.env` beside the plugin, then `~/.config/jeffort/.env`. An installed copy runs from Claude Code's plugin cache, so use the last one:
+Put your TypeSafe key in a key file. Jeffort looks, in order, at process variables, then `.env` or `jeffort.env` beside the plugin, then the same two names in `~/.config/jeffort/`. An installed copy runs from Claude Code's plugin cache, so use `~/.config/jeffort/`. Prefer `jeffort.env`: a `Read(**/.env)` permission rule in your Claude Code settings can stop plugins reading any file named exactly `.env`.
 
 ```sh
 mkdir -p ~/.config/jeffort
-printf 'TYPESAFE_API_KEY=your-key\nTYPESAFE_MODEL=jev-latest\n' > ~/.config/jeffort/.env
+printf 'TYPESAFE_API_KEY=your-key\nTYPESAFE_MODEL=jev-latest\n' > ~/.config/jeffort/jeffort.env
 ```
 
 `TYPESAFE_MODEL` is optional and defaults to `jev-latest`. Prompts are sent to TypeSafe for scoring, with the name of the Claude model that will answer (so Jev can judge how much effort that model needs), and nothing else is.

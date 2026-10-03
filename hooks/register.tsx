@@ -82,12 +82,22 @@ const DEFAULT_MODEL = 'jev-latest'
 /** `.env` values, cached once they hold a key so turns do not re-read the files. */
 let cachedVars: Record<string, string> | undefined
 
-/** Merges both `.env` files; where both set a variable, the one beside the plugin wins. */
+/**
+ * Merges the key files; where several set a variable, the first listed wins. `jeffort.env` is
+ * read as well as `.env` because a user's `Read(**\/.env)` permission rule can stop a plugin
+ * reading any file named exactly `.env`.
+ */
 async function fileVars($: Engine): Promise<Record<string, string>> {
   if (cachedVars) return cachedVars
   const vars: Record<string, string> = {}
   const home = await $.env.get('HOME')
-  for (const path of [`${$.plugin.root}/.env`, `${home}/.config/jeffort/.env`]) {
+  const places = [
+    `${$.plugin.root}/.env`,
+    `${$.plugin.root}/jeffort.env`,
+    `${home}/.config/jeffort/.env`,
+    `${home}/.config/jeffort/jeffort.env`,
+  ]
+  for (const path of places) {
     try {
       for (const [k, v] of Object.entries(parseEnv(await $.fs.read(path)))) vars[k] ??= v
     } catch {
@@ -99,9 +109,9 @@ async function fileVars($: Engine): Promise<Record<string, string>> {
 }
 
 /**
- * Credentials come from process variables, then `.env` beside the plugin, then
- * `~/.config/jeffort/.env`. The last one is for an installed copy: Claude Code runs it from its
- * plugin cache, where a gitignored `.env` is not copied.
+ * Credentials come from process variables, then `.env` or `jeffort.env` beside the plugin, then
+ * the same two names in `~/.config/jeffort/`. The home folder is for an installed copy: Claude Code
+ * runs it from its plugin cache, where a gitignored `.env` is not copied.
  */
 async function credentials($: Engine): Promise<Auth | undefined> {
   const vars = await fileVars($)
@@ -274,7 +284,7 @@ async function pickFor($: Engine, prompt: string | undefined, e: TurnStepInput, 
   try {
     const auth = prompt ? await credentials($) : undefined
     if (prompt && !auth) {
-      status('Jeffort: no TYPESAFE_API_KEY in .env')
+      status('Jeffort: no TYPESAFE_API_KEY found. Put it in ~/.config/jeffort/jeffort.env')
     } else if (prompt && auth) {
       const decision = await score($, auth, prompt, e.model, levels)
       if (decision?.level) {
