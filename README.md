@@ -34,11 +34,17 @@ printf 'TYPESAFE_API_KEY=your-key\nTYPESAFE_MODEL=jev-latest\n' > ~/.config/jeff
 
 Jeffort only rewrites effort on Opus 5.5, Sonnet 5.5 and Fable 5.1, with an API key or a Claude subscription. Those are the models where Claude Code keeps the prompt cache across effort changes. Anywhere else (Bedrock, Vertex, a Claude apps gateway, older models) it does nothing. Needs Claude Code 2.1.284 or later.
 
+It also leaves these alone, so your own `/effort` stands:
+
+- Subagent turns. An agent can set its own effort, and Jeffort cannot tell that from one it inherited.
+- Turns where Jev's confidence is below 0.3.
+- Turns where Jev cannot be reached or errors.
+
 Measured on Opus 5.5: the first effort change in a conversation rebuilds about 22k tokens of cache, once. Later changes keep it. That one-time cost is subtracted from the savings the band shows. Jeffort spots it as a large cache write on the first request of a turn whose level changed, so it is an estimate too: a compaction on such a turn can look the same.
 
 ## What the savings numbers are
 
-Estimates. They assume fixed output-token ratios per effort level (low 0.55, medium 0.75, high 1.0, xhigh 1.7, from the benchmark in `bench/`). Dollar figures cover Opus 5.5 and Sonnet 5.5 only.
+Estimates. They assume fixed output-token ratios per effort level, relative to high: low 0.55, medium 0.75, high 1.0, xhigh 1.7, max 2.2. Low and xhigh are rounded from the coding benchmark in `bench/` (0.58 and 1.80). Medium is interpolated and max is a guess: neither was measured. Dollar figures cover Opus 5.5 and Sonnet 5.5 only.
 
 ## Benchmarks
 
@@ -46,7 +52,8 @@ Estimates. They assume fixed output-token ratios per effort level (low 0.55, med
 
 - `bench/run.py`: ten short questions.
 - `bench/agentic/run.py`: eight coding tasks with file and shell tools, graded by tests.
-- `bench/jev_picks.py`: what Jeffort picks for 26 prompts, coding and not.
+
+`bench/jev_picks.py` is a survey rather than a benchmark: it records what Jeffort picks for 26 prompts, coding and not.
 
 On the coding tasks Jeffort used about half the output tokens of xhigh, and every task passed. Every task also passed at low, so those tasks cannot show a quality loss from lower effort. One sample per cell.
 
