@@ -40,6 +40,8 @@ declare module 'claude-code' {
       lifetime: Stats
       last: Last
       theme: string
+      barStyle: string
+      counts: Record<string, number>
       turns: TurnLog[]
       tab: PaneTab
     }

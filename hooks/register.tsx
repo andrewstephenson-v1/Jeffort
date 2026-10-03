@@ -9,7 +9,11 @@ import type { EngineInterface as Engine, Register } from 'claude-code'
 
 import type { Last, PaneTab, Stats, TurnLog } from '../types'
 import {
+  BAR_STYLES,
+  BAR_STYLE_IDS,
+  DEFAULT_BAR_STYLE,
   DEFAULT_THEME,
+  LEVELS,
   REBUILD_MIN_TOKENS,
   THEMES,
   THEME_IDS,
@@ -20,6 +24,7 @@ import {
   cleanPrompt,
   decide,
   estimateSaved,
+  isBarStyle,
   isCacheSafeModel,
   isLevel,
   isTheme,
@@ -28,6 +33,7 @@ import {
   outputPrice,
   paletteOf,
   parseEnv,
+  shares,
 } from './policy'
 import type { Dims, Level, Palette } from './policy'
 
@@ -51,6 +57,9 @@ const last = atom({ plugin: 'jeffort', key: 'last' } as const, null as Last)
 const theme = atom({ plugin: 'jeffort', key: 'theme' } as const, DEFAULT_THEME)
 /** This session only, in memory: prompt excerpts are never written to disk. */
 const turns = atom({ plugin: 'jeffort', key: 'turns' } as const, [] as TurnLog[])
+const barStyle = atom({ plugin: 'jeffort', key: 'barStyle' } as const, DEFAULT_BAR_STYLE)
+/** This session only: how many turns ran at each effort level. */
+const counts = atom({ plugin: 'jeffort', key: 'counts' } as const, mix([]) as Record<string, number>)
 const tab = atom({ plugin: 'jeffort', key: 'tab' } as const, 'stats' as PaneTab)
 
 function emptyStats(): Stats {
@@ -110,6 +119,7 @@ async function persist($: Engine) {
     enabled: await read($, enabled),
     stats: await read($, lifetime),
     theme: await read($, theme),
+    barStyle: await read($, barStyle),
   })
 }
 
@@ -120,6 +130,11 @@ async function setEnabled($: Engine, value: boolean) {
 
 async function setTheme($: Engine, id: string) {
   await update($, theme, () => id)
+  await persist($)
+}
+
+async function setBarStyle($: Engine, id: string) {
+  await update($, barStyle, () => id)
   await persist($)
 }
 
@@ -155,6 +170,31 @@ function bar({ Box }: Primitives, p: Palette, s: Stats) {
   )
 }
 
+/** The effort-mix bar: one segment per level, sized by how many turns ran at it. */
+function mixBar({ Box }: Primitives, p: Palette, c: Record<string, number>) {
+  return (
+    <Box width="100%" height={1}>
+      {LEVELS.filter((l) => (c[l] ?? 0) > 0).map((l) => (
+        <Box key={`seg-${l}`} flexGrow={c[l]} minWidth={1} backgroundColor={p[l]} />
+      ))}
+    </Box>
+  )
+}
+
+/** Percentages in the level colours, e.g. low 45% medium 27% high 27%. */
+function mixLegend({ Box, Text }: Primitives, p: Palette, c: Record<string, number>) {
+  const pct = shares(mix(LEVELS.flatMap((l) => Array<Level>(c[l] ?? 0).fill(l))))
+  return (
+    <Box gap={2}>
+      {LEVELS.filter((l) => pct[l] > 0).map((l) => (
+        <Text key={`pct-${l}`} color={p[l]}>
+          {l} {pct[l]}%
+        </Text>
+      ))}
+    </Box>
+  )
+}
+
 function barLegend(s: Stats): string {
   const { used, saved, over } = barModel(s.outputTokens, s.tokensSaved)
   return (
@@ -177,10 +217,11 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     try {
       const saved = (await $.store.get(STORE_KEY)) ?? (await $.store.get(LEGACY_STORE_KEY))
-      const s = saved as { enabled?: boolean; stats?: Stats; theme?: string } | undefined
+      const s = saved as { enabled?: boolean; stats?: Stats; theme?: string; barStyle?: string } | undefined
       await update($, enabled, () => s?.enabled ?? options.enabled !== false)
       if (s?.stats) await update($, lifetime, () => ({ ...emptyStats(), ...s.stats }))
       if (isTheme(s?.theme)) await update($, theme, () => s!.theme as string)
+      if (isBarStyle(s?.barStyle)) await update($, barStyle, () => s!.barStyle as string)
     } catch {
       // first run, or an unreadable store: defaults stand
     }
@@ -203,6 +244,7 @@ export const register: Register = (on, options) => {
       await update($, stats, () => emptyStats())
       await update($, lifetime, () => emptyStats())
       await update($, turns, () => [])
+      await update($, counts, () => mix([]))
       await persist($)
     } else if (arg === '') await setEnabled($, !(await read($, enabled)))
     const isOn = await read($, enabled)
@@ -293,6 +335,7 @@ export const register: Register = (on, options) => {
       await update($, stats, (s) => addTurn(s, turn))
       await update($, lifetime, (s) => addTurn(s, turn))
       await update($, turns, (list) => [...list, entry].slice(-MAX_TURN_LOG))
+      await update($, counts, (c) => ({ ...c, [pick.level!]: (c[pick.level!] ?? 0) + 1 }))
       await persist($)
     }
     return next(e)
@@ -305,6 +348,8 @@ export const register: Register = (on, options) => {
     const s = await read($, stats)
     const l = await read($, last)
     const p = paletteOf(await read($, theme))
+    const style = await read($, barStyle)
+    const c = await read($, counts)
     const hasBar = isOn && s.applied > 0 && s.outputTokens + Math.abs(s.tokensSaved) > 0
 
     return (
@@ -322,7 +367,15 @@ export const register: Register = (on, options) => {
           ) : null}
           <Button key="toggle" label={isOn ? 'Turn off' : 'Turn on'} onPress={() => setEnabled($, !isOn)} />
         </Box>
-        {hasBar ? (
+        {hasBar && style === 'mix' ? (
+          <Box flexDirection="column">
+            {mixBar({ Box, Text }, p, c)}
+            <Box gap={2}>
+              {mixLegend({ Box, Text }, p, c)}
+              <Text dimColor>of turns · net ~{money(net(s))}</Text>
+            </Box>
+          </Box>
+        ) : hasBar ? (
           <Box flexDirection="column">
             {bar({ Box, Text }, p, s)}
             <Text dimColor>this session, est.: {barLegend(s)}</Text>
@@ -337,6 +390,8 @@ export const register: Register = (on, options) => {
     const isOn = await read($, enabled)
     const current = await read($, tab)
     const themeId = await read($, theme)
+    const styleId = await read($, barStyle)
+    const sessionCounts = await read($, counts)
     const p = paletteOf(themeId)
     const rows = e.viewport?.rows ?? 24
 
@@ -377,6 +432,29 @@ export const register: Register = (on, options) => {
             )
           })}
           <Text dimColor>Swatches: used and saved bar, then low, medium, high, xhigh, and extra spend.</Text>
+          <Text bold>Bar style</Text>
+          {BAR_STYLE_IDS.map((id) => {
+            const b = BAR_STYLES[id]!
+            const sample = id === 'mix' ? { low: 5, medium: 3, high: 3, xhigh: 0, max: 0 } : null
+            return (
+              <Box key={id} flexDirection="column">
+                <Button key={`bar-${id}`} label={`${styleId === id ? '●' : '○'} ${b.label}`} onPress={() => setBarStyle($, id)} />
+                <Text dimColor>  {b.blurb}</Text>
+                <Box paddingLeft={2} width={30} height={1}>
+                  {sample ? (
+                    LEVELS.filter((l) => sample[l] > 0).map((l) => (
+                      <Box key={`sample-${l}`} flexGrow={sample[l]} minWidth={1} backgroundColor={p[l]} />
+                    ))
+                  ) : (
+                    <Box width={28} height={1}>
+                      <Box flexGrow={12} backgroundColor={p.used} />
+                      <Box flexGrow={22} backgroundColor={p.saved} />
+                    </Box>
+                  )}
+                </Box>
+              </Box>
+            )
+          })}
         </Box>
       )
     }
@@ -398,8 +476,11 @@ export const register: Register = (on, options) => {
           <Button key="toggle" label={isOn ? 'Turn off' : 'Turn on'} onPress={() => setEnabled($, !isOn)} />
         </Box>
         <Box flexDirection="column">
-          <Text dimColor>This session, estimated</Text>
-          {hasBar ? bar({ Box, Text }, p, s) : <Text dimColor>No turns scored yet.</Text>}
+          <Text dimColor>{styleId === 'mix' ? 'This session, share of turns at each effort' : 'This session, estimated'}</Text>
+          {!hasBar ? <Text dimColor>No turns scored yet.</Text> : null}
+          {hasBar && styleId === 'mix' ? mixBar({ Box, Text }, p, sessionCounts) : null}
+          {hasBar && styleId === 'mix' ? mixLegend({ Box, Text }, p, sessionCounts) : null}
+          {hasBar && styleId !== 'mix' ? bar({ Box, Text }, p, s) : null}
           {hasBar ? <Text dimColor>{barLegend(s)}</Text> : null}
         </Box>
         <Text dimColor>
