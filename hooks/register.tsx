@@ -284,7 +284,7 @@ async function pickFor($: Engine, prompt: string | undefined, e: TurnStepInput, 
   try {
     const auth = prompt ? await credentials($) : undefined
     if (prompt && !auth) {
-      status('Jeffort: no TYPESAFE_API_KEY found. Put it in ~/.config/jeffort/jeffort.env')
+      status('Jeffort: no TYPESAFE_API_KEY found. Put it in ~/.config/jeffort/.env (project .env files are not read)')
     } else if (prompt && auth) {
       const decision = await score($, auth, prompt, e.model, levels)
       if (decision?.level) {
