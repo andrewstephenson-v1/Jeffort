@@ -117,3 +117,22 @@ test('shares are whole percentages that always sum to 100', () => {
   const sum = Object.values(shares({ low: 7, medium: 2, high: 9, xhigh: 4, max: 1 })).reduce((a, b) => a + b, 0)
   expect(sum).toBe(100)
 })
+
+import { initialEnabled, projectKey, projectName } from '../hooks/policy'
+
+test('the enabled setting set to false wins over the stored toggle', () => {
+  expect(initialEnabled(true, false)).toBe(false)
+  expect(initialEnabled(undefined, false)).toBe(false)
+  expect(initialEnabled(false, true)).toBe(false)
+  expect(initialEnabled(true, undefined)).toBe(true)
+  expect(initialEnabled(undefined, undefined)).toBe(true)
+  expect(initialEnabled('yes', true)).toBe(true)
+})
+
+test('projects are keyed by full path and named by their last segment', () => {
+  expect(projectKey('/Users/a/Dev/api')).not.toBe(projectKey('/Users/a/Work/api'))
+  expect(projectName('/Users/a/Dev/ClaudeMods/Jeffort')).toBe('Jeffort')
+  expect(projectName('/Users/a/Dev/api/')).toBe('api')
+  expect(projectName('C:\\Users\\a\\Dev\\api')).toBe('api')
+  expect(projectName('/')).toBe('/')
+})

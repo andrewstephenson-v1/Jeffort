@@ -1,6 +1,6 @@
 {
   "name": "jeffort",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Jeffort scores each prompt with TypeSafe Jev and sets Claude's effort level for the turn, never touching the model",
   "author": {
     "name": "Andrew Stephenson"
@@ -10,7 +10,7 @@
     "enabled": {
       "type": "boolean",
       "title": "Automatic effort",
-      "description": "Choose the effort level for each turn from Jev's score. Off leaves your /effort setting alone.",
+      "description": "Choose the effort level for each turn from Jev's score. Off leaves your /effort setting alone and starts every session off, whatever /jeffort last set; /jeffort on still works for that session.",
       "default": true
     },
     "ceiling": {

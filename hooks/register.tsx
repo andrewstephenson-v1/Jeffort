@@ -7,7 +7,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine, Register } from 'claude-code'
 
-import type { Last, PaneTab, Stats, TurnLog } from '../types'
+import type { Last, PaneTab, Project, Stats, TurnLog } from '../types'
 import {
   BAR_STYLES,
   BAR_STYLE_IDS,
@@ -15,6 +15,7 @@ import {
   DEFAULT_THEME,
   LEVELS,
   MIN_CLAUDE_CODE,
+  PROJECT_KEY_PREFIX,
   REBUILD_MIN_TOKENS,
   THEMES,
   THEME_IDS,
@@ -25,6 +26,7 @@ import {
   cleanPrompt,
   decide,
   estimateSaved,
+  initialEnabled,
   isBarStyle,
   isCacheSafeModel,
   isLevel,
@@ -35,6 +37,8 @@ import {
   outputPrice,
   paletteOf,
   parseEnv,
+  projectKey,
+  projectName,
   shares,
 } from './policy'
 import type { Dims, Level, Palette } from './policy'
@@ -55,6 +59,8 @@ const enabled = atom({ plugin: 'jeffort', key: 'enabled' } as const, true)
 const stats = atom({ plugin: 'jeffort', key: 'stats' } as const, emptyStats())
 /** Across sessions: kept in the store and shown by /jeffort. */
 const lifetime = atom({ plugin: 'jeffort', key: 'lifetime' } as const, emptyStats())
+/** Across sessions, for the project this session is in: kept in the store under its root. */
+const project = atom({ plugin: 'jeffort', key: 'project' } as const, null as Project)
 const last = atom({ plugin: 'jeffort', key: 'last' } as const, null as Last)
 const theme = atom({ plugin: 'jeffort', key: 'theme' } as const, DEFAULT_THEME)
 /** This session only, in memory: prompt excerpts are never written to disk. */
@@ -140,6 +146,29 @@ async function persist($: Engine) {
   })
 }
 
+/**
+ * Points `project` at the session's project root, reading that project's totals from the store
+ * when the root changed (session start, or a `/cd` since). Fails open: totals then go nowhere.
+ */
+async function loadProject($: Engine): Promise<Project> {
+  try {
+    const root = await $.session.root()
+    const current = await read($, project)
+    if (current?.root === root) return current
+    const saved = (await $.store.get(projectKey(root))) as { stats?: Stats } | undefined
+    const next: Project = { root, name: projectName(root), stats: { ...emptyStats(), ...saved?.stats } }
+    await update($, project, () => next)
+    return next
+  } catch {
+    return read($, project)
+  }
+}
+
+async function persistProject($: Engine) {
+  const p = await read($, project)
+  if (p) await $.store.set(projectKey(p.root), { stats: p.stats })
+}
+
 async function setEnabled($: Engine, value: boolean) {
   await update($, enabled, () => value)
   await persist($)
@@ -171,7 +200,16 @@ function addTurn(s: Stats, turn: Stats): Stats {
   }
 }
 
-type Pick = { level: Level | null; baseline: Level | null; model: string; score?: number; dims?: Dims; excerpt: string }
+type Pick = {
+  level: Level | null
+  baseline: Level | null
+  model: string
+  score?: number
+  dims?: Dims
+  excerpt: string
+  /** Cache tokens written by the turn's first request, where an effort change rebuilds the cache. */
+  firstWrite?: number
+}
 
 type Primitives = { Box: any; Text: any }
 
@@ -223,8 +261,9 @@ function barLegend(s: Stats): string {
 }
 
 export const register: Register = (on, options) => {
-  // The prompt as typed, held until the turn's first model request asks for it.
-  let pendingPrompt: string | undefined
+  // Each turn's prompt by turn id, held until the turn's first model request asks for it. Keyed
+  // by turn so prompts queued during a running turn each reach their own turn.
+  const prompts = new Map<string, string>()
   // What was chosen for each turn, so its tool-loop continuations reuse it (one Jev call per
   // turn) and turn.complete can price it.
   const picks = new Map<string, Pick>()
@@ -241,39 +280,48 @@ export const register: Register = (on, options) => {
       supportedVersion = false
     }
     if (!supportedVersion) $.ui.status(`Jeffort: needs Claude Code ${MIN_CLAUDE_CODE} or later; off`)
+    let s: { enabled?: boolean; stats?: Stats; theme?: string; barStyle?: string } | undefined
     try {
-      const saved = (await $.store.get(STORE_KEY)) ?? (await $.store.get(LEGACY_STORE_KEY))
-      const s = saved as { enabled?: boolean; stats?: Stats; theme?: string; barStyle?: string } | undefined
-      await update($, enabled, () => s?.enabled ?? options.enabled !== false)
-      if (s?.stats) await update($, lifetime, () => ({ ...emptyStats(), ...s.stats }))
+      s = ((await $.store.get(STORE_KEY)) ?? (await $.store.get(LEGACY_STORE_KEY))) as typeof s
+      if (s?.stats) await update($, lifetime, () => ({ ...emptyStats(), ...s!.stats }))
       if (isTheme(s?.theme)) await update($, theme, () => s!.theme as string)
       if (isBarStyle(s?.barStyle)) await update($, barStyle, () => s!.barStyle as string)
     } catch {
       // first run, or an unreadable store: defaults stand
     }
+    await update($, enabled, () => initialEnabled(s?.enabled, options.enabled))
+    await loadProject($)
     await $.command.register({
       name: COMMAND,
       description: 'Open the Jeffort pane, or toggle it (on, off) and show estimated savings',
-      argumentHint: '[on|off|pane|reset]',
+      argumentHint: '[on|off|pane|reset|reset all]',
     })
     return next(e)
   })
 
   on('command.run', { command: COMMAND }, async ($, e) => {
-    const arg = e.args.trim().toLowerCase()
+    const arg = e.args.trim().toLowerCase().replace(/\s+/g, ' ')
     if (arg === 'pane') {
       await openPane($)
       return { text: 'Jeffort pane opened.' }
     }
+    const here = await loadProject($)
     if (arg === 'on' || arg === 'off') await setEnabled($, arg === 'on')
-    else if (arg === 'reset') {
+    else if (arg === 'reset' || arg === 'reset all') {
+      // `reset` clears this session and this project; `reset all` every project and the overall total.
       await update($, stats, () => emptyStats())
-      await update($, lifetime, () => emptyStats())
       await update($, turns, () => [])
       await update($, counts, () => mix([]))
+      if (here) await update($, project, () => ({ ...here, stats: emptyStats() }))
+      if (arg === 'reset all') {
+        await update($, lifetime, () => emptyStats())
+        for (const key of await $.store.keys()) if (key.startsWith(PROJECT_KEY_PREFIX)) await $.store.delete(key)
+      }
       await persist($)
+      await persistProject($)
     } else if (arg === '') await setEnabled($, !(await read($, enabled)))
     const isOn = await read($, enabled)
+    const proj = await read($, project)
     const line = (label: string, s: Stats) =>
       `${label}: ${s.changed} of ${s.applied} turns changed effort; ~${compact(s.tokensSaved)} output tokens saved ` +
       `(~${money(s.usdSaved)}) minus ${compact(s.rebuiltTokens)} cache tokens rebuilt ` +
@@ -281,13 +329,17 @@ export const register: Register = (on, options) => {
     return {
       text:
         `Jeffort is ${isOn ? 'on' : 'off'}.\n${line('This session', await read($, stats))}\n` +
-        `${line('All sessions', await read($, lifetime))}\n` +
+        (proj ? `${line(`This project (${proj.name})`, proj.stats)}\n` : '') +
+        `${line('All projects', await read($, lifetime))}\n` +
         'Dollar figures cover Opus 5.5 and Sonnet 5.5 only; all savings are estimates from fixed per-level output ratios.',
     }
   })
 
-  on('prompt.submit', ($, e, next) => {
-    pendingPrompt = cleanPrompt(e.text)
+  // The prompt the turn actually begins with, after every prompt.submit hook settled or dropped it.
+  // "" for a turn started without one (a continuation): those are never scored.
+  on('turn.start', ($, e, next) => {
+    if (prompts.size >= MAX_TURNS_REMEMBERED) prompts.delete(prompts.keys().next().value as string)
+    prompts.set(e.turnId, cleanPrompt(e.text))
     return next(e)
   })
 
@@ -301,8 +353,8 @@ export const register: Register = (on, options) => {
 
     if (!picks.has(e.turnId)) {
       if (picks.size >= MAX_TURNS_REMEMBERED) picks.delete(picks.keys().next().value as string)
-      const prompt = pendingPrompt
-      pendingPrompt = undefined
+      const prompt = prompts.get(e.turnId)
+      prompts.delete(e.turnId)
       const baseline = isLevel(e.effort) ? e.effort : null
       const pick: Pick = { level: null, baseline, model: e.model, excerpt: (prompt ?? '').replace(/\s+/g, ' ').slice(0, 80) }
       try {
@@ -327,13 +379,16 @@ export const register: Register = (on, options) => {
       if (pick.level) await update($, last, () => ({ level: pick.level!, baseline: String(e.effort), score: pick.score ?? 0 }))
     }
 
-    const level = picks.get(e.turnId)?.level
-    return yield* next(level ? { ...e, effort: level } : e)
+    const chosen = picks.get(e.turnId)
+    const result = yield* next(chosen?.level ? { ...e, effort: chosen.level } : e)
+    if (chosen && e.index === 0 && result.usage) chosen.firstWrite = result.usage.cache_creation_input_tokens
+    return result
   })
 
   on('turn.complete', async ($, e, next) => {
     const pick = picks.get(e.turnId)
     picks.delete(e.turnId)
+    prompts.delete(e.turnId)
     const before = previousLevel
     if (pick && !e.agentId) previousLevel = pick.level ?? pick.baseline ?? previousLevel
     if (pick?.level && !e.agentId && e.usage) {
@@ -341,7 +396,7 @@ export const register: Register = (on, options) => {
       const saved = pick.baseline ? estimateSaved(out, pick.level, pick.baseline) : 0
       const price = outputPrice(e.usage.model)
       const writePrice = cacheWritePrice(e.usage.model)
-      const created = e.usage.cache_creation_input_tokens
+      const created = pick.firstWrite ?? 0
       const rebuilt = before && before !== pick.level && created > REBUILD_MIN_TOKENS ? created : 0
       const turn: Stats = {
         changed: pick.baseline && pick.baseline !== pick.level ? 1 : 0,
@@ -363,9 +418,11 @@ export const register: Register = (on, options) => {
       }
       await update($, stats, (s) => addTurn(s, turn))
       await update($, lifetime, (s) => addTurn(s, turn))
+      if (await loadProject($)) await update($, project, (p) => p && { ...p, stats: addTurn(p.stats, turn) })
       await update($, turns, (list) => [...list, entry].slice(-MAX_TURN_LOG))
       await update($, counts, (c) => ({ ...c, [pick.level!]: (c[pick.level!] ?? 0) + 1 }))
       await persist($)
+      await persistProject($)
     }
     return next(e)
   })
@@ -461,7 +518,7 @@ export const register: Register = (on, options) => {
             )
           })}
           <Text dimColor>Swatches: used and saved bar, then low, medium, high, xhigh, and extra spend.</Text>
-          <Text bold>Bar style</Text>
+          <Text bold>Band bar style</Text>
           {BAR_STYLE_IDS.map((id) => {
             const b = BAR_STYLES[id]!
             const sample = id === 'mix' ? { low: 5, medium: 3, high: 3, xhigh: 0, max: 0 } : null
@@ -490,11 +547,12 @@ export const register: Register = (on, options) => {
 
     const s = await read($, stats)
     const all = await read($, lifetime)
+    const proj = await read($, project)
     const log = await read($, turns)
     const levels = Object.fromEntries(LEVELS.map((l) => [l, sessionCounts[l] ?? 0])) as Record<Level, number>
     const peak = Math.max(1, ...Object.values(levels))
-    const room = Math.max(3, rows - 18)
-    const hasBar = s.applied > 0 && s.outputTokens + Math.abs(s.tokensSaved) > 0
+    const room = Math.max(3, rows - 16)
+    const scored = s.applied > 0 && s.outputTokens + Math.abs(s.tokensSaved) > 0
 
     return (
       <Box flexDirection="column" gap={1}>
@@ -504,17 +562,19 @@ export const register: Register = (on, options) => {
           <Text dimColor>{isOn ? 'on ' : 'off '}</Text>
           <Button key="toggle" label={isOn ? 'Turn off' : 'Turn on'} onPress={() => setEnabled($, !isOn)} />
         </Box>
+        {/* No bar here: the band below already draws it, and the level rows show the mix. */}
         <Box flexDirection="column">
-          <Text dimColor>{styleId === 'mix' ? 'This session, share of turns at each effort' : 'This session, estimated'}</Text>
-          {!hasBar ? <Text dimColor>No turns scored yet.</Text> : null}
-          {hasBar && styleId === 'mix' ? mixBar({ Box, Text }, p, sessionCounts) : null}
-          {hasBar && styleId === 'mix' ? mixLegend({ Box, Text }, p, sessionCounts) : null}
-          {hasBar && styleId !== 'mix' ? bar({ Box, Text }, p, s) : null}
-          {hasBar ? <Text dimColor>{barLegend(s)}</Text> : null}
+          <Text dimColor>{scored ? `This session, est.: ${barLegend(s)}` : 'No turns scored yet this session.'}</Text>
+          {proj ? (
+            <Text dimColor>
+              This project ({proj.name}): {proj.stats.changed} of {proj.stats.applied} turns changed · ~
+              {compact(proj.stats.tokensSaved)} tokens saved · net ~{money(net(proj.stats))}
+            </Text>
+          ) : null}
+          <Text dimColor>
+            All projects: {all.changed} of {all.applied} turns changed · ~{compact(all.tokensSaved)} tokens saved · net ~{money(net(all))}
+          </Text>
         </Box>
-        <Text dimColor>
-          All sessions: {all.changed} of {all.applied} turns changed · ~{compact(all.tokensSaved)} tokens saved · net ~{money(net(all))}
-        </Text>
         <Box flexDirection="column">
           <Text dimColor>Where this session's turns landed</Text>
           {(['low', 'medium', 'high', 'xhigh', 'max'] as const).map((lv) => (
