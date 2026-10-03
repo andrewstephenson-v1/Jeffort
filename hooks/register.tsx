@@ -354,7 +354,7 @@ export const register: Register = (on, options) => {
   // turn) and turn.complete can price it.
   const picks = new Map<string, Pick>()
   // Effort in effect on the previous main turn (applied or the session's own), to spot the
-  // one-time cache rebuild.
+  // one-time cache rebuild, and kept by a turn that has no prompt to score.
   let previousLevel: Level | null = null
   // Each subagent's pick by agent id, made once on its task and reused by its later turns; null
   // where it is left alone. Forks are noted at spawn, where the engine says which ones are.
@@ -483,9 +483,13 @@ export const register: Register = (on, options) => {
       if (picks.size >= MAX_TURNS_REMEMBERED) picks.delete(picks.keys().next().value as string)
       const prompt = prompts.get(e.turnId)
       prompts.delete(e.turnId)
-      const pick = await pickFor($, prompt, e, allowedLevels(options.floor, options.ceiling))
+      // A turn with no prompt (a continuation, or a subagent's hand-back) keeps the last turn's level.
+      const pick: Pick =
+        prompt || !previousLevel
+          ? await pickFor($, prompt, e, allowedLevels(options.floor, options.ceiling))
+          : { level: previousLevel, baseline: isLevel(e.effort) ? e.effort : null, model: e.model, excerpt: '(no prompt: kept last level)' }
       picks.set(e.turnId, pick)
-      if (pick.level) await update($, last, () => ({ level: pick.level!, baseline: String(e.effort), score: pick.score ?? 0 }))
+      if (pick.level && prompt) await update($, last, () => ({ level: pick.level!, baseline: String(e.effort), score: pick.score ?? 0 }))
     }
 
     const chosen = picks.get(e.turnId)

@@ -92,7 +92,7 @@ const projectStats = (w: { store: Map<string, unknown> }, root: string) =>
 
 const start = ($: any, w: { root: string }) => $.session.start({ cwd: w.root, surface: null, isInteractive: false })
 
-test('each turn is scored on its own prompt, and continuations are not scored', async ($, on) => {
+test('each turn is scored on its own prompt, and continuations keep the last level', async ($, on) => {
   const w = world(on, (p) => (p === 'hard' ? 3 : 0))
   await start($, w)
   // Two prompts started before either steps: each must reach its own turn.
@@ -106,7 +106,19 @@ test('each turn is scored on its own prompt, and continuations are not scored', 
   expect(w.asked).toEqual(['easy', 'hard'])
   expect(w.effort.get('t1')).toBe('low')
   expect(w.effort.get('t2')).toBe('xhigh')
-  expect(w.effort.get('t3')).toBe('high')
+  expect(w.effort.get('t3')).toBe('xhigh')
+})
+
+test('a subagent hand-back is not scored and keeps the last level', async ($, on) => {
+  const w = world(on, (p) => (p === 'easy' ? 0 : 3))
+  await start($, w)
+  // Before any level is known, an unprompted turn leaves the session's effort alone.
+  await turn($, 'h0', '')
+  await turn($, 'h1', 'easy')
+  await turn($, 'h2', '<agent-message from="a1">\nThe report follows:\n  hi\n</agent-message>\n\nThat is an agent.')
+  expect(w.asked).toEqual(['easy'])
+  expect(w.effort.get('h0')).toBe('high')
+  expect(w.effort.get('h2')).toBe('low')
 })
 
 test('without a first-party credential (Bedrock, Vertex, a gateway) Jev is never called', async ($, on) => {

@@ -11,7 +11,7 @@ claude plugin marketplace add andrewstephenson-v1/Jeffort
 claude plugin install jeffort@jeffort --scope user
 ```
 
-The repo is private, so the machine needs git access to it (for example `gh auth login` as `andrewstephenson-v1`). To try a local clone for one session instead: `claude --plugin-dir /path/to/Jeffort`.
+To try a local clone for one session instead: `claude --plugin-dir /path/to/Jeffort`.
 
 Put your TypeSafe key in a `.env` file. Jeffort looks, in order, at process variables, `.env` beside the plugin, then `~/.config/jeffort/.env`. An installed copy runs from Claude Code's plugin cache, so use the last one:
 
@@ -38,6 +38,8 @@ It also leaves these alone, so your own `/effort` stands:
 
 - Turns where Jev's confidence is below 0.3.
 - Turns where Jev cannot be reached or errors.
+
+A turn with no prompt of yours, such as a continuation or a subagent reporting back, is not sent to Jev. It keeps the previous turn's level, or the session's effort if there is none yet.
 
 Measured on Opus 5.5: the first effort change in a conversation rebuilds about 22k tokens of cache, once. Later changes keep it. That one-time cost is subtracted from the savings the band shows. Jeffort spots it as a large cache write on the first request of a turn whose level changed, so it is an estimate too: a compaction on such a turn can look the same.
 

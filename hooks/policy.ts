@@ -193,9 +193,15 @@ export function decide(body: unknown, levels: readonly Level[]): Decision {
   return { level, score: composite, confidence, dims }
 }
 
-/** The prompt as a router should see it: Claude Code's injected reminders removed. */
-export const cleanPrompt = (text: string): string =>
-  text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim()
+/**
+ * The prompt as a router should see it: Claude Code's injected reminders removed. A subagent's
+ * hand-back (an `<agent-message>` frame wrapped in harness prose) is not a prompt at all, so it
+ * comes back empty rather than being scored on the frame's wording.
+ */
+export const cleanPrompt = (text: string): string => {
+  const cleaned = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim()
+  return /<agent-message\b/.test(cleaned) ? '' : cleaned
+}
 
 /**
  * Output-token multiplier per level, relative to `high`, from bench/ on Opus 5.5. Eight agentic
