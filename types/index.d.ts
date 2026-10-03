@@ -1,7 +1,7 @@
 export type Stats = {
-  /** Main-loop turns where Jeffort picked a level different from the session's. */
+  /** Turns (subagents' included) where Jeffort picked a level different from the session's. */
   changed: number
-  /** Main-loop turns where it applied a level (same or different). */
+  /** Turns (subagents' included) where it applied a level (same or different). */
   applied: number
   /** Estimated output tokens saved against the session's own effort; negative means spent more. */
   tokensSaved: number

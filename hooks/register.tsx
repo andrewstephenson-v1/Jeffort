@@ -5,7 +5,7 @@
 // problem leaves the session's own effort in place.
 
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface as Engine, Register } from 'claude-code'
+import type { EngineInterface as Engine, Register, TurnCompleteInput, TurnStepInput } from 'claude-code'
 
 import type { Last, PaneTab, Project, Stats, TurnLog } from '../types'
 import {
@@ -47,6 +47,7 @@ const JEV_URL = 'https://api.typesafe.ai/v1/systemone'
 /** Per-request budget; routing must never hold up a turn for long. */
 const JEV_TIMEOUT_MS = 3000
 const MAX_TURNS_REMEMBERED = 20
+const MAX_AGENTS_REMEMBERED = 50
 const MAX_TURN_LOG = 50
 const COMMAND = 'jeffort'
 const PANE = 'jeffort'
@@ -260,6 +261,91 @@ function barLegend(s: Stats): string {
   )
 }
 
+/**
+ * Scores a prompt and returns what to apply; `level` stays null (the effort in force stands) when
+ * there is no prompt, no key, or Jev declines. `label` prefixes a subagent's excerpt, and only the
+ * main loop writes the status line, so parallel subagents do not flicker it.
+ */
+async function pickFor($: Engine, prompt: string | undefined, e: TurnStepInput, levels: readonly Level[], label = ''): Promise<Pick> {
+  const baseline = isLevel(e.effort) ? e.effort : null
+  const excerpt = `${label}${(prompt ?? '').replace(/\s+/g, ' ')}`.slice(0, 80)
+  const pick: Pick = { level: null, baseline, model: e.model, excerpt }
+  const status = (text: string) => (e.agentId ? undefined : $.ui.status(text))
+  try {
+    const auth = prompt ? await credentials($) : undefined
+    if (prompt && !auth) {
+      status('Jeffort: no TYPESAFE_API_KEY in .env')
+    } else if (prompt && auth) {
+      const decision = await score($, auth, prompt, e.model, levels)
+      if (decision?.level) {
+        pick.level = decision.level
+        pick.score = decision.score
+        pick.dims = decision.dims
+        status(`Jeffort: ${decision.level} (${decision.score.toFixed(2)}, p=${decision.confidence.toFixed(2)})`)
+      } else {
+        status(`Jeffort: kept ${String(e.effort)} (${decision?.reason ?? 'jev unavailable'})`)
+      }
+    }
+  } catch {
+    // fail open: the effort in force stands
+  }
+  return pick
+}
+
+/**
+ * A subagent's pick, made once on the task it was given, or null to leave it alone. Left alone:
+ * an effort other than the main loop's own (its definition set one), a fork or a teammate (they
+ * carry the parent's conversation, so a new level would rebuild its cache), and the engine's own
+ * loops (compaction, memory, workflows), which no agent list names.
+ */
+async function subagentPick(
+  $: Engine,
+  e: TurnStepInput & { agentId: string },
+  inherited: TurnStepInput['effort'],
+  levels: readonly Level[],
+): Promise<Pick | null> {
+  if (e.effort !== inherited) return null
+  const info = (await $.agent.list()).find((a) => a.id === e.agentId)
+  if (!info || info.type === 'fork' || info.type === 'teammate') return null
+  const found = await $.session.messages({ agentId: e.agentId })
+  if ('deny' in found) return null
+  const prompt = cleanPrompt(found.find((m) => m.role === 'user')?.text ?? '')
+  return prompt ? pickFor($, prompt, e, levels, `${info.type}: `) : null
+}
+
+/** Adds an applied turn to every total; `rebuilt` is the cache it rebuilt, if any. */
+async function record($: Engine, pick: Pick & { level: Level }, usage: NonNullable<TurnCompleteInput['usage']>, rebuilt: number) {
+  const out = usage.output_tokens
+  const saved = pick.baseline ? estimateSaved(out, pick.level, pick.baseline) : 0
+  const price = outputPrice(usage.model)
+  const writePrice = cacheWritePrice(usage.model)
+  const turn: Stats = {
+    changed: pick.baseline && pick.baseline !== pick.level ? 1 : 0,
+    applied: 1,
+    tokensSaved: saved,
+    usdSaved: price ? (saved * price) / 1_000_000 : 0,
+    outputTokens: out,
+    rebuiltTokens: rebuilt,
+    rebuildUsd: writePrice ? (rebuilt * writePrice) / 1_000_000 : 0,
+  }
+  const entry: TurnLog = {
+    at: Date.now(),
+    excerpt: pick.excerpt,
+    level: pick.level,
+    baseline: pick.baseline ?? '?',
+    outputTokens: out,
+    saved,
+    dims: pick.dims ?? {},
+  }
+  await update($, stats, (s) => addTurn(s, turn))
+  await update($, lifetime, (s) => addTurn(s, turn))
+  if (await loadProject($)) await update($, project, (p) => p && { ...p, stats: addTurn(p.stats, turn) })
+  await update($, turns, (list) => [...list, entry].slice(-MAX_TURN_LOG))
+  await update($, counts, (c) => ({ ...c, [pick.level]: (c[pick.level] ?? 0) + 1 }))
+  await persist($)
+  await persistProject($)
+}
+
 export const register: Register = (on, options) => {
   // Each turn's prompt by turn id, held until the turn's first model request asks for it. Keyed
   // by turn so prompts queued during a running turn each reach their own turn.
@@ -270,6 +356,12 @@ export const register: Register = (on, options) => {
   // Effort in effect on the previous main turn (applied or the session's own), to spot the
   // one-time cache rebuild.
   let previousLevel: Level | null = null
+  // Each subagent's pick by agent id, made once on its task and reused by its later turns; null
+  // where it is left alone. Forks are noted at spawn, where the engine says which ones are.
+  const agentPicks = new Map<string, Pick | null>()
+  const forks = new Set<string>()
+  // The main loop's own effort on its latest request, before any rewrite: what a subagent inherits.
+  let mainEffort: TurnStepInput['effort']
   // Whether this Claude Code keeps the prompt cache across effort changes; older ones never call Jev.
   let supportedVersion = false
   // Whether the session talks to Anthropic directly (an API key or a Claude subscription). Behind
@@ -353,38 +445,45 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  on('agent.spawn', async ($, e, next) => {
+    const result = await next(e)
+    if (e.fork && result.agentId) forks.add(result.agentId)
+    return result
+  })
+
   on('turn.step', async function* ($, e, next) {
-    // Subagents keep their own effort, and models, providers or Claude Code versions that would
-    // lose the cache are left alone: Jev is never called for them.
-    const skip = e.agentId || e.effort === undefined || !supportedVersion || !firstParty || !isCacheSafeModel(e.model)
+    // What a subagent inherits: the main loop's effort before Jeffort rewrites it.
+    if (!e.agentId) mainEffort = e.effort
+    // Models, providers or Claude Code versions that would lose the cache are left alone: Jev is
+    // never called for them.
+    const skip = e.effort === undefined || !supportedVersion || !firstParty || !isCacheSafeModel(e.model)
     if (skip || !(await read($, enabled))) {
       return yield* next(e)
+    }
+
+    if (e.agentId) {
+      if (!options.subagents) return yield* next(e)
+      if (!agentPicks.has(e.agentId)) {
+        if (agentPicks.size >= MAX_AGENTS_REMEMBERED) agentPicks.delete(agentPicks.keys().next().value as string)
+        let pick: Pick | null = null
+        try {
+          pick = forks.has(e.agentId)
+            ? null
+            : await subagentPick($, { ...e, agentId: e.agentId }, mainEffort, allowedLevels(options.floor, options.ceiling))
+        } catch {
+          // fail open: the subagent's effort stands
+        }
+        agentPicks.set(e.agentId, pick)
+      }
+      const chosen = agentPicks.get(e.agentId)
+      return yield* next(chosen?.level ? { ...e, effort: chosen.level } : e)
     }
 
     if (!picks.has(e.turnId)) {
       if (picks.size >= MAX_TURNS_REMEMBERED) picks.delete(picks.keys().next().value as string)
       const prompt = prompts.get(e.turnId)
       prompts.delete(e.turnId)
-      const baseline = isLevel(e.effort) ? e.effort : null
-      const pick: Pick = { level: null, baseline, model: e.model, excerpt: (prompt ?? '').replace(/\s+/g, ' ').slice(0, 80) }
-      try {
-        const auth = prompt ? await credentials($) : undefined
-        if (prompt && !auth) {
-          $.ui.status('Jeffort: no TYPESAFE_API_KEY in .env')
-        } else if (prompt && auth) {
-          const decision = await score($, auth, prompt, e.model, allowedLevels(options.floor, options.ceiling))
-          if (decision?.level) {
-            pick.level = decision.level
-            pick.score = decision.score
-            pick.dims = decision.dims
-            $.ui.status(`Jeffort: ${decision.level} (${decision.score.toFixed(2)}, p=${decision.confidence.toFixed(2)})`)
-          } else {
-            $.ui.status(`Jeffort: kept ${String(e.effort)} (${decision?.reason ?? 'jev unavailable'})`)
-          }
-        }
-      } catch {
-        // fail open: the session's effort stands
-      }
+      const pick = await pickFor($, prompt, e, allowedLevels(options.floor, options.ceiling))
       picks.set(e.turnId, pick)
       if (pick.level) await update($, last, () => ({ level: pick.level!, baseline: String(e.effort), score: pick.score ?? 0 }))
     }
@@ -396,43 +495,22 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.complete', async ($, e, next) => {
+    if (e.agentId) {
+      // A subagent's turns count toward the totals, but never as a cache rebuild: its first
+      // request writes a fresh conversation's cache whatever the level.
+      const pick = agentPicks.get(e.agentId)
+      if (pick?.level && e.usage) await record($, { ...pick, level: pick.level }, e.usage, 0)
+      return next(e)
+    }
     const pick = picks.get(e.turnId)
     picks.delete(e.turnId)
     prompts.delete(e.turnId)
     const before = previousLevel
-    if (pick && !e.agentId) previousLevel = pick.level ?? pick.baseline ?? previousLevel
-    if (pick?.level && !e.agentId && e.usage) {
-      const out = e.usage.output_tokens
-      const saved = pick.baseline ? estimateSaved(out, pick.level, pick.baseline) : 0
-      const price = outputPrice(e.usage.model)
-      const writePrice = cacheWritePrice(e.usage.model)
+    if (pick) previousLevel = pick.level ?? pick.baseline ?? previousLevel
+    if (pick?.level && e.usage) {
       const created = pick.firstWrite ?? 0
       const rebuilt = before && before !== pick.level && created > REBUILD_MIN_TOKENS ? created : 0
-      const turn: Stats = {
-        changed: pick.baseline && pick.baseline !== pick.level ? 1 : 0,
-        applied: 1,
-        tokensSaved: saved,
-        usdSaved: price ? (saved * price) / 1_000_000 : 0,
-        outputTokens: out,
-        rebuiltTokens: rebuilt,
-        rebuildUsd: writePrice ? (rebuilt * writePrice) / 1_000_000 : 0,
-      }
-      const entry: TurnLog = {
-        at: Date.now(),
-        excerpt: pick.excerpt,
-        level: pick.level,
-        baseline: pick.baseline ?? '?',
-        outputTokens: out,
-        saved,
-        dims: pick.dims ?? {},
-      }
-      await update($, stats, (s) => addTurn(s, turn))
-      await update($, lifetime, (s) => addTurn(s, turn))
-      if (await loadProject($)) await update($, project, (p) => p && { ...p, stats: addTurn(p.stats, turn) })
-      await update($, turns, (list) => [...list, entry].slice(-MAX_TURN_LOG))
-      await update($, counts, (c) => ({ ...c, [pick.level!]: (c[pick.level!] ?? 0) + 1 }))
-      await persist($)
-      await persistProject($)
+      await record($, { ...pick, level: pick.level }, e.usage, rebuilt)
     }
     return next(e)
   })

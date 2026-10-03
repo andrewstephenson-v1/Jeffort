@@ -28,7 +28,7 @@ printf 'TYPESAFE_API_KEY=your-key\nTYPESAFE_MODEL=jev-latest\n' > ~/.config/jeff
 - `/jeffort reset` clears this session's and this project's totals; `/jeffort reset all` clears every project and the overall total.
 - Totals are kept for this session, this project and all projects. A project is the session's project root, keyed by its full path, so two folders with the same name stay separate. A git worktree counts as its own project.
 - **Appearance** tab: Default, Signal, Mono, Colour-safe, Retro, or Match terminal.
-- Settings (`/config`): the lowest and highest level Jeffort may pick. `max` is off by default.
+- Settings (`/config`): the lowest and highest level Jeffort may pick (`max` is off by default), and whether it sets effort for subagents too (on by default).
 
 ## When it acts
 
@@ -36,11 +36,18 @@ Jeffort only rewrites effort on Opus 5.5, Sonnet 5.5 and Fable 5.1, with an API 
 
 It also leaves these alone, so your own `/effort` stands:
 
-- Subagent turns. An agent can set its own effort, and Jeffort cannot tell that from one it inherited.
 - Turns where Jev's confidence is below 0.3.
 - Turns where Jev cannot be reached or errors.
 
 Measured on Opus 5.5: the first effort change in a conversation rebuilds about 22k tokens of cache, once. Later changes keep it. That one-time cost is subtracted from the savings the band shows. Jeffort spots it as a large cache write on the first request of a turn whose level changed, so it is an estimate too: a compaction on such a turn can look the same.
+
+## Subagents
+
+Each subagent is scored once, on the task it was given, and keeps that level for its whole run. Its turns count toward the totals. It never counts as a cache rebuild, because a subagent starts a fresh conversation. A subagent on a model not listed above (Haiku, say) is left alone.
+
+Jeffort only changes a subagent that inherited the session's effort. It cannot read an agent's definition, so it treats an effort other than the session's as one the definition set, and leaves it. The gap: an agent whose definition sets the same level as your session looks inherited and gets scored. Forks and teammates carry on the parent's conversation, so they are left alone too.
+
+Turn it off with the **Subagents too** setting in `/config`.
 
 ## What the savings numbers are
 

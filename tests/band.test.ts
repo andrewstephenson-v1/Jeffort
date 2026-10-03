@@ -15,7 +15,7 @@ const BAND = { component: 'AbovePrompt', props: { hasSurvey: false } } as const
 
 test('band offers a toggle on every surface and flips it', async ($, on) => {
   memoryStore(on)
-  for (const surface of ['terminal', 'desktop'] as const) {
+  for (const surface of ['terminal', 'desktop', 'vscode'] as const) {
     const ui = await $.ui.mount({ plugin: 'jeffort', surface, ...BAND })
     expect(await ui.find({ key: 'toggle' })).toBeDefined()
     await ui.press({ key: 'toggle' })

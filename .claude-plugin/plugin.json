@@ -1,6 +1,6 @@
 {
   "name": "jeffort",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Jeffort scores each prompt with TypeSafe Jev and sets Claude's effort level for the turn, never touching the model",
   "author": {
     "name": "Andrew Stephenson"
@@ -11,6 +11,12 @@
       "type": "boolean",
       "title": "Automatic effort",
       "description": "Choose the effort level for each turn from Jev's score. Off leaves your /effort setting alone and starts every session off, whatever /jeffort last set; /jeffort on still works for that session.",
+      "default": true
+    },
+    "subagents": {
+      "type": "boolean",
+      "title": "Subagents too",
+      "description": "Also choose the effort for subagents, scored once on the task each is given. Agents whose definition sets their own effort, forks and teammates are always left alone.",
       "default": true
     },
     "ceiling": {
