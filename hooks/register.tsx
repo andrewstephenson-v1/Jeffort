@@ -14,6 +14,7 @@ import {
   DEFAULT_BAR_STYLE,
   DEFAULT_THEME,
   LEVELS,
+  MIN_CLAUDE_CODE,
   REBUILD_MIN_TOKENS,
   THEMES,
   THEME_IDS,
@@ -27,6 +28,7 @@ import {
   isBarStyle,
   isCacheSafeModel,
   isLevel,
+  isSupportedVersion,
   isTheme,
   levelColor,
   mix,
@@ -101,19 +103,21 @@ async function credentials($: Engine): Promise<Auth | undefined> {
   return { key, model: (await $.env.get('TYPESAFE_MODEL')) || vars.TYPESAFE_MODEL || DEFAULT_MODEL }
 }
 
-async function score($: Engine, auth: Auth, prompt: string, levels: readonly Level[]) {
-  const body = JSON.stringify(buildRequest(prompt, auth.model))
-  let timer: ReturnType<typeof setTimeout> | undefined
+async function score($: Engine, auth: Auth, prompt: string, assistantModel: string, levels: readonly Level[]) {
+  const body = JSON.stringify(buildRequest(prompt, assistantModel, auth.model))
+  // The engine's clock, not setTimeout (not part of the plugin runtime); aborted once the race settles.
+  const stop = new AbortController()
   const reply = await Promise.race([
     $.http.fetch(JEV_URL, {
       method: 'POST',
       headers: { authorization: `Bearer ${auth.key}`, 'content-type': 'application/json' },
       body,
     }),
-    new Promise<null>((resolve) => {
-      timer = setTimeout(() => resolve(null), JEV_TIMEOUT_MS)
-    }),
-  ]).finally(() => clearTimeout(timer))
+    $.clock
+      .sleep(JEV_TIMEOUT_MS, { signal: stop.signal })
+      .then(() => null)
+      .catch(() => null),
+  ]).finally(() => stop.abort())
   if (!reply?.ok) return null
   return decide(JSON.parse(reply.text), levels)
 }
@@ -227,8 +231,16 @@ export const register: Register = (on, options) => {
   // Effort in effect on the previous main turn (applied or the session's own), to spot the
   // one-time cache rebuild.
   let previousLevel: Level | null = null
+  // Whether this Claude Code keeps the prompt cache across effort changes; older ones never call Jev.
+  let supportedVersion = false
 
   on('session.start', async ($, e, next) => {
+    try {
+      supportedVersion = isSupportedVersion((await $.session.version()).base)
+    } catch {
+      supportedVersion = false
+    }
+    if (!supportedVersion) $.ui.status(`Jeffort: needs Claude Code ${MIN_CLAUDE_CODE} or later; off`)
     try {
       const saved = (await $.store.get(STORE_KEY)) ?? (await $.store.get(LEGACY_STORE_KEY))
       const s = saved as { enabled?: boolean; stats?: Stats; theme?: string; barStyle?: string } | undefined
@@ -280,8 +292,10 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.step', async function* ($, e, next) {
-    // Subagents keep their own effort, and models that would lose the cache are left alone.
-    if (e.agentId || e.effort === undefined || !isCacheSafeModel(e.model) || !(await read($, enabled))) {
+    // Subagents keep their own effort, and models or Claude Code versions that would lose the
+    // cache are left alone: Jev is never called for them.
+    const skip = e.agentId || e.effort === undefined || !supportedVersion || !isCacheSafeModel(e.model)
+    if (skip || !(await read($, enabled))) {
       return yield* next(e)
     }
 
@@ -296,7 +310,7 @@ export const register: Register = (on, options) => {
         if (prompt && !auth) {
           $.ui.status('Jeffort: no TYPESAFE_API_KEY in .env')
         } else if (prompt && auth) {
-          const decision = await score($, auth, prompt, allowedLevels(options.floor, options.ceiling))
+          const decision = await score($, auth, prompt, e.model, allowedLevels(options.floor, options.ceiling))
           if (decision?.level) {
             pick.level = decision.level
             pick.score = decision.score
