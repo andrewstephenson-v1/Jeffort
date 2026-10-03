@@ -20,7 +20,7 @@ const usage = (output: number, written: number): Usage => ({
  */
 function world(on: On, scoreOf: (prompt: string) => number) {
   const store = new Map<string, unknown>()
-  const w = { store, root: '/Users/a/Dev/alpha', asked: [] as string[], effort: new Map<string, unknown>(), firstWrite: 500, firstParty: true }
+  const w = { store, root: '/Users/a/Dev/alpha', asked: [] as string[], effort: new Map<string, unknown>(), firstWrite: 500, firstParty: true, agents: [] as Array<{ id: string; type: string; task: string }> }
   on('store.get', async (_$, e) => ({ value: store.get(e.key) }))
   on('store.set', async (_$, e) => {
     store.set(e.key, e.value)
@@ -40,6 +40,13 @@ function world(on: On, scoreOf: (prompt: string) => number) {
   on('session.root', async () => ({ value: w.root }))
   on('env.get', async (_$, e) => ({ value: e.name === 'TYPESAFE_API_KEY' ? 'test-key' : undefined }))
   on('fs.read', async () => ({ deny: 'no such file' }))
+  on('agent.list', async () => ({
+    value: w.agents.map((a) => ({ id: a.id, type: a.type, description: a.task, status: 'running' })),
+  }))
+  on('session.messages', async (_$, e: any) => {
+    const agent = w.agents.find((a) => a.id === e.agentId)
+    return { value: agent ? [{ role: 'user', text: agent.task, toolUses: [] }] : [] } as any
+  })
   on('clock.sleep', () => new Promise(() => {}))
   on('http.fetch', async (_$, e) => {
     const prompt = (JSON.parse(e.init?.body ?? '{}') as { state: { request: string } }).state.request
@@ -49,7 +56,7 @@ function world(on: On, scoreOf: (prompt: string) => number) {
     return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ answers }) } }
   })
   on('turn.step', async function* (_$, e) {
-    if (e.index === 0) w.effort.set(e.turnId, e.effort)
+    if (e.index === 0) w.effort.set(e.agentId ? `${e.agentId}/${e.turnId}` : e.turnId, e.effort)
     const u = usage(100, e.index === 0 ? w.firstWrite : 30000)
     yield { kind: 'stop', stopReason: 'end_turn', usage: u }
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: u }
@@ -148,4 +155,54 @@ test('totals are kept per project by full path, and reset clears this project on
   await $.command.run({ command: 'jeffort', args: 'reset all' })
   expect(projectStats(w, '/Users/a/Dev/alpha')).toBeUndefined()
   expect(overall(w).applied).toBe(0)
+})
+
+/** One subagent turn: its steps at `effort` (what it inherited or its definition set) and its completion. */
+async function agentTurn($: any, agentId: string, turnId: string, effort = 'high') {
+  for (let index = 0; index < STEPS_PER_TURN; index++) {
+    const s = $.turn.step({ turnId, index, model: MODEL, effort, messageCount: 1, agentId })
+    for await (const _ of s) void _
+    await s.result
+  }
+  // A fresh conversation: its first request writes a large cache, which is no rebuild.
+  await $.turn.complete({ turnId, agentId, answer: '', durationMs: 1, isAborted: false, reason: 'answer', usage: usage(1000, 30000) })
+}
+
+test('a subagent is scored once on its task and counted, never as a rebuild', async ($, on) => {
+  const w = world(on, (p) => (p === 'find the config' ? 0 : 3))
+  w.agents.push({ id: 'a1', type: 'Explore', task: 'find the config' })
+  await start($, w)
+  await turn($, 'm1', 'hard')
+  const before = overall(w)
+  await agentTurn($, 'a1', 's1')
+  await agentTurn($, 'a1', 's2')
+  expect(w.asked).toEqual(['hard', 'find the config'])
+  expect(w.effort.get('a1/s1')).toBe('low')
+  expect(w.effort.get('a1/s2')).toBe('low')
+  expect(overall(w).applied).toBe((before.applied ?? 0) + 2)
+  expect(overall(w).rebuiltTokens).toBe(before.rebuiltTokens ?? 0)
+})
+
+test('subagents are left alone when their effort is their own, for forks, unknown loops, or when off', async ($, on) => {
+  const w = world(on, () => 0)
+  w.agents.push({ id: 'own', type: 'Plan', task: 'plan it' }, { id: 'fk', type: 'fork', task: 'go on' })
+  await start($, w)
+  await turn($, 'm1', 'easy')
+  await agentTurn($, 'own', 's1', 'max')
+  await agentTurn($, 'fk', 's2')
+  await agentTurn($, 'compaction', 's3')
+  expect(w.asked).toEqual(['easy'])
+  expect(w.effort.get('own/s1')).toBe('max')
+  expect(w.effort.get('fk/s2')).toBe('high')
+  expect(w.effort.get('compaction/s3')).toBe('high')
+})
+
+test('the subagents setting off leaves every subagent alone', { options: { subagents: false } }, async ($, on) => {
+  const w = world(on, () => 0)
+  w.agents.push({ id: 'a1', type: 'Explore', task: 'find the config' })
+  await start($, w)
+  await turn($, 'm1', 'easy')
+  await agentTurn($, 'a1', 's1')
+  expect(w.asked).toEqual(['easy'])
+  expect(w.effort.get('a1/s1')).toBe('high')
 })

@@ -39,7 +39,7 @@ test('mix counts levels and ignores unknown ones', () => {
 
 test('pane has both tabs and every theme on every surface', async ($, on) => {
   memoryStore(on)
-  for (const surface of ['terminal', 'desktop'] as const) {
+  for (const surface of ['terminal', 'desktop', 'vscode'] as const) {
     const ui = await $.ui.mount({ plugin: 'jeffort', surface, ...PANE })
     expect(await ui.find({ key: 'tab-stats' })).toBeDefined()
     expect(await ui.find({ key: 'tab-look' })).toBeDefined()
