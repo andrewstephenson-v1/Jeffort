@@ -198,6 +198,61 @@ test('a subagent is scored once on its task and counted, never as a rebuild', as
   expect(overall(w).rebuiltTokens).toBe(before.rebuiltTokens ?? 0)
 })
 
+test('a subagent goes at most one level above the effort it inherited, by default', { options: { ceiling: 'max' } }, async ($, on) => {
+  const w = world(on, () => 3)
+  w.agents.push({ id: 'a1', type: 'implementer', task: 'fix the blocking review' })
+  await start($, w)
+  await turn($, 'm1', 'hard')
+  await agentTurn($, 'a1', 's1')
+  expect(w.effort.get('m1')).toBe('max')
+  expect(w.effort.get('a1/s1')).toBe('xhigh')
+})
+
+test('the subagent ceiling can match the session\'s, or be a fixed level', { options: { ceiling: 'max', subagentCeiling: 'same' } }, async ($, on) => {
+  const w = world(on, () => 3)
+  w.agents.push({ id: 'a1', type: 'implementer', task: 'fix it' })
+  await start($, w)
+  await turn($, 'm1', 'hard')
+  await agentTurn($, 'a1', 's1')
+  expect(w.effort.get('a1/s1')).toBe('max')
+})
+
+test('a fixed subagent ceiling caps every subagent', { options: { subagentCeiling: 'medium' } }, async ($, on) => {
+  const w = world(on, () => 3)
+  w.agents.push({ id: 'a1', type: 'codex-reviewer', task: 're-review the PR' })
+  await start($, w)
+  await turn($, 'm1', 'hard')
+  await agentTurn($, 'a1', 's1')
+  expect(w.effort.get('m1')).toBe('xhigh')
+  expect(w.effort.get('a1/s1')).toBe('medium')
+})
+
+test('a background task\'s notice is not scored and keeps the last level', async ($, on) => {
+  const w = world(on, (p) => (p === 'hard' ? 3 : 0))
+  await start($, w)
+  await turn($, 'n1', 'hard')
+  await turn($, 'n2', '<task-notification> <task-id>b1g6ot29j</task-id> done </task-notification>')
+  expect(w.asked).toEqual(['hard'])
+  expect(w.effort.get('n2')).toBe('xhigh')
+})
+
+test('agreement reads yours = Jeffort\'s, and millions read as M', async ($, on) => {
+  const w = world(on, () => 1.5)
+  await start($, w)
+  await turn($, 'q1', 'middling')
+  const ui = await $.ui.mount({ plugin: 'jeffort', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, maxRows: 3, bodyColumns: 120 } })
+  expect(textOf(await ui.drawn())).toContain('high = high')
+  await ui.unmount()
+  const big = async (output: number) => {
+    await $.turn.start({ turnId: 'q2', text: 'hard enough' })
+    await steps($, 'q2')
+    await $.turn.complete({ turnId: 'q2', answer: '', durationMs: 1, isAborted: false, reason: 'answer', usage: usage(output, 500) })
+  }
+  await big(3_000_000)
+  const shown = await $.command.run({ command: 'jeffort', args: 'stats' })
+  expect(shown.text).not.toMatch(/\d{4,}\.\dk/)
+})
+
 test('subagents are left alone when their effort is their own, for forks, unknown loops, or when off', async ($, on) => {
   const w = world(on, () => 0)
   w.agents.push({ id: 'own', type: 'Plan', task: 'plan it' }, { id: 'fk', type: 'fork', task: 'go on' })

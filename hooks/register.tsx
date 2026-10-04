@@ -22,6 +22,7 @@ import {
   THEME_IDS,
   allowedLevels,
   barModel,
+  capLevel,
   buildRequest,
   cacheWritePrice,
   cleanPrompt,
@@ -42,6 +43,7 @@ import {
   parseEnv,
   projectKey,
   projectName,
+  subagentCap,
 } from './policy'
 import type { Dims, Level, Mode, Palette } from './policy'
 
@@ -149,12 +151,14 @@ async function score($: Engine, auth: Auth, prompt: string, assistantModel: stri
 
 const compact = (n: number): string => {
   const a = Math.abs(n)
-  const s = a >= 1000 ? `${(a / 1000).toFixed(1)}k` : String(a)
+  const s = a >= 1_000_000 ? `${(a / 1_000_000).toFixed(1)}M` : a >= 1000 ? `${(a / 1000).toFixed(1)}k` : String(a)
   return n < 0 ? `-${s}` : s
 }
 
 const net = (s: Stats): number => s.usdSaved - s.rebuildUsd
 const money = (n: number): string => `${n < 0 ? '-' : ''}$${Math.abs(n).toFixed(2)}`
+/** A token estimate in words: `~10.5k saved`, or `~5.5M extra` when Jeffort spent more. */
+const savedOrExtra = (n: number): string => `~${compact(Math.abs(n))} ${n >= 0 ? 'saved' : 'extra'}`
 /** Marks a figure as an estimate: ~$0.01, and -~$1.09 rather than ~-$1.09. */
 const approx = (figure: string): string => (figure.startsWith('-') ? `-~${figure.slice(1)}` : `~${figure}`)
 
@@ -365,6 +369,7 @@ async function subagentPick(
   inherited: TurnStepInput['effort'],
   levels: readonly Level[],
   m: Pick['mode'],
+  ceiling: unknown,
 ): Promise<Pick | null> {
   if (e.effort !== inherited) return null
   const info = (await $.agent.list()).find((a) => a.id === e.agentId)
@@ -372,7 +377,11 @@ async function subagentPick(
   const found = await $.session.messages({ agentId: e.agentId })
   if ('deny' in found) return null
   const prompt = cleanPrompt(found.find((m) => m.role === 'user')?.text ?? '')
-  return prompt ? pickFor($, prompt, e, levels, m, `${info.type}: `) : null
+  if (!prompt) return null
+  // Scored on the full scale, then capped, so a subagent's level means the same as the main loop's.
+  const pick = await pickFor($, prompt, e, levels, m, `${info.type}: `)
+  if (pick.level) pick.level = capLevel(pick.level, subagentCap(ceiling, e.effort, levels))
+  return pick
 }
 
 /**
@@ -511,7 +520,7 @@ export const register: Register = (on, options) => {
     const m = await read($, mode)
     const proj = await read($, project)
     const line = (label: string, s: Stats) =>
-      `${label}: ${s.changed} of ${s.applied} turns changed effort; ${approx(compact(s.tokensSaved))} output tokens saved ` +
+      `${label}: ${s.changed} of ${s.applied} turns changed effort; ${savedOrExtra(s.tokensSaved)} output tokens ` +
       `(${approx(money(s.usdSaved))}) minus ${compact(s.rebuiltTokens)} cache tokens rebuilt ` +
       `(${approx(money(s.rebuildUsd))}) = ${approx(money(net(s)))} net.`
     const auditLine = (label: string, s: Stats) =>
@@ -570,7 +579,7 @@ export const register: Register = (on, options) => {
         try {
           pick = forks.has(e.agentId)
             ? null
-            : await subagentPick($, { ...e, agentId: e.agentId }, mainEffort, allowedLevels(options.floor, options.ceiling), m)
+            : await subagentPick($, { ...e, agentId: e.agentId }, mainEffort, allowedLevels(options.floor, options.ceiling), m, options.subagentCeiling)
         } catch {
           // fail open: the subagent's effort stands
         }
@@ -653,8 +662,8 @@ export const register: Register = (on, options) => {
     const step = l ? rank(l.level, l.baseline) : 0
     const would = isAudit ? 'would pick ' : ''
 
-    // The level change, the same way round as the status line: a boost reads `yours → Jeffort's`
-    // with Jeffort's level in red, a drop `Jeffort's ← yours`.
+    // The level change: a boost reads `yours → Jeffort's` with Jeffort's level in red, a drop
+    // `Jeffort's ← yours`, and agreement `yours = Jeffort's`.
     const change = !l ? (
       <Text dimColor>{m === 'off' ? 'off' : isAudit ? 'audit · waiting for a turn' : 'waiting for a turn'}</Text>
     ) : step > 0 ? (
@@ -671,7 +680,7 @@ export const register: Register = (on, options) => {
       <Text>
         <Text dimColor>
           {isAudit ? 'audit · ' : ''}
-          {step < 0 ? would : isAudit ? 'would keep ' : ''}
+          {step < 0 ? would : `${l.baseline} = `}
         </Text>
         <Text color={levelColor(p, l.level)}>{l.level}</Text>
         {step < 0 ? <Text dimColor> ← {l.baseline}</Text> : null}
@@ -790,7 +799,7 @@ export const register: Register = (on, options) => {
       isAudit
         ? `${label}: would have changed ${t.changed} of ${t.applied} turns · would ${t.tokensSaved >= 0 ? 'save' : 'spend'} ` +
           `${approx(compact(Math.abs(t.tokensSaved)))} tokens · net ${approx(money(net(t)))}`
-        : `${label}: ${t.changed} of ${t.applied} turns changed · ${approx(compact(t.tokensSaved))} tokens saved · net ${approx(money(net(t)))}`
+        : `${label}: ${t.changed} of ${t.applied} turns changed · ${savedOrExtra(t.tokensSaved)} tokens · net ${approx(money(net(t)))}`
     const levels = Object.fromEntries(LEVELS.map((l) => [l, sessionCounts[l] ?? 0])) as Record<Level, number>
     const peak = Math.max(1, ...Object.values(levels))
     const room = Math.max(3, rows - 16)

@@ -91,6 +91,7 @@ test('a subagent hand-back is not a prompt', () => {
     'Another Claude session sent a message:\n<agent-message from="a362ec11c8108b6b8">\n[Subagent hand-back] The ' +
     'report follows:\n  hi\n</agent-message>\n\nThat "other Claude session" is an agent working inside this same ' +
     "session, so this was not typed by your user. That's permission laundering."
+  expect(cleanPrompt('<task-notification> <task-id>b1</task-id> done </task-notification>')).toBe('')
   expect(cleanPrompt(handback)).toBe('')
   expect(cleanPrompt(`<system-reminder>x</system-reminder>${handback}`)).toBe('')
 })
@@ -128,7 +129,7 @@ test('shares are whole percentages that always sum to 100', () => {
   expect(sum).toBe(100)
 })
 
-import { estimateWouldSave, initialMode, projectKey, projectName } from '../hooks/policy'
+import { capLevel, estimateWouldSave, initialMode, projectKey, projectName, subagentCap } from '../hooks/policy'
 
 test('the enabled setting set to false wins over the stored mode, and an old toggle still counts', () => {
   expect(initialMode('on', true, false)).toBe('off')
@@ -158,4 +159,16 @@ test('projects are keyed by full path and named by their last segment', () => {
   expect(projectName('/Users/a/Dev/api/')).toBe('api')
   expect(projectName('C:\\Users\\a\\Dev\\api')).toBe('api')
   expect(projectName('/')).toBe('/')
+})
+
+test('the subagent cap is one above the inherited effort by default, within the allowed levels', () => {
+  const all = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+  expect(subagentCap('one-above', 'medium', all)).toBe('high')
+  expect(subagentCap(undefined, 'medium', all)).toBe('high')
+  expect(subagentCap('one-above', 'max', all)).toBe('max')
+  expect(subagentCap('same', 'medium', all)).toBe('max')
+  expect(subagentCap('low', 'high', ['medium', 'high', 'xhigh'])).toBe('medium')
+  expect(subagentCap('max', 'high', ['low', 'medium', 'high', 'xhigh'])).toBe('xhigh')
+  expect(capLevel('xhigh', 'high')).toBe('high')
+  expect(capLevel('low', 'high')).toBe('low')
 })
