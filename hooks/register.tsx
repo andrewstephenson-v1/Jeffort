@@ -541,6 +541,17 @@ export const register: Register = (on, options) => {
     const style = await read($, barStyle)
     const c = await read($, counts)
     const hasBar = isOn && s.applied > 0 && s.outputTokens + Math.abs(s.tokensSaved) > 0
+    // A band taller than its room scrolls, leaving only the first row in view: an open pane or
+    // the task list can squeeze it to one or two rows. Drop rows from the bottom instead, and
+    // carry the net figure on the first row once the legend no longer fits.
+    const room = e.props.maxRows ?? Infinity
+    const showBar = hasBar && room >= 2
+    const showLegend = hasBar && room >= 3
+    const brief = !hasBar || showLegend
+      ? null
+      : style === 'mix'
+        ? `· net ${approx(money(net(s)))}`
+        : `· ${approx(compact(s.tokensSaved))} saved · net ${approx(money(net(s)))}`
 
     return (
       <Box flexDirection="column">
@@ -556,19 +567,31 @@ export const register: Register = (on, options) => {
             <Text dimColor>waiting for a turn </Text>
           ) : null}
           <Button key="toggle" label={isOn ? 'Turn off' : 'Turn on'} onPress={() => setEnabled($, !isOn)} />
+          {brief ? (
+            <Text dimColor wrap="truncate-end">
+              {' '}
+              {brief}
+            </Text>
+          ) : null}
         </Box>
-        {hasBar && style === 'mix' ? (
+        {showBar && style === 'mix' ? (
           <Box flexDirection="column">
             {mixBar({ Box, Text }, p, c)}
-            <Box gap={2}>
-              {mixLegend({ Box, Text }, p, c)}
-              <Text dimColor>of turns · net {approx(money(net(s)))}</Text>
-            </Box>
+            {showLegend ? (
+              <Box gap={2}>
+                {mixLegend({ Box, Text }, p, c)}
+                <Text dimColor wrap="truncate-end">of turns · net {approx(money(net(s)))}</Text>
+              </Box>
+            ) : null}
           </Box>
-        ) : hasBar ? (
+        ) : showBar ? (
           <Box flexDirection="column">
             {bar({ Box, Text }, p, s)}
-            <Text dimColor>this session, est.: {barLegend(s)}</Text>
+            {showLegend ? (
+              <Text dimColor wrap="truncate-end">
+                this session, est.: {barLegend(s)}
+              </Text>
+            ) : null}
           </Box>
         ) : null}
       </Box>

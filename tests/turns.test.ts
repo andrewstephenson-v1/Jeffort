@@ -218,3 +218,33 @@ test('the subagents setting off leaves every subagent alone', { options: { subag
   expect(w.asked).toEqual(['easy'])
   expect(w.effort.get('a1/s1')).toBe('high')
 })
+
+test('the band drops its legend, then its bar, as its room shrinks, keeping the net figure in view', async ($, on) => {
+  const w = world(on, () => 0)
+  await start($, w)
+  await turn($, 't1', 'easy')
+  const band = (maxRows: number) =>
+    $.ui.mount({ plugin: 'jeffort', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, maxRows } })
+  const legend = { type: 'Text', text: /this session, est\./ } as const
+  const brief = { type: 'Text', text: /saved · net ~\$/ } as const
+  const bars = async (ui: any) => JSON.stringify(await ui.drawn()).includes('backgroundColor')
+
+  const roomy = await band(3)
+  expect(await roomy.find(legend)).toBeDefined()
+  expect(await roomy.find(brief)).toBeUndefined()
+  expect(await bars(roomy)).toBe(true)
+  await roomy.unmount()
+
+  const two = await band(2)
+  expect(await two.find(legend)).toBeUndefined()
+  expect(await two.find(brief)).toBeDefined()
+  expect(await bars(two)).toBe(true)
+  await two.unmount()
+
+  const one = await band(1)
+  expect(await one.find(legend)).toBeUndefined()
+  expect(await one.find(brief)).toBeDefined()
+  expect(await bars(one)).toBe(false)
+  expect(await one.find({ key: 'toggle' })).toBeDefined()
+  await one.unmount()
+})
