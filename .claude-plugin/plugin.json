@@ -1,6 +1,6 @@
 {
   "name": "jeffort",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Jeffort scores each prompt with TypeSafe Jev and sets Claude's effort level for the turn, never touching the model",
   "author": {
     "name": "Andrew Stephenson"
