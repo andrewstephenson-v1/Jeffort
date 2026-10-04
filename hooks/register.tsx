@@ -2,7 +2,8 @@
 //
 // The model is never touched. Only `effort` is rewritten, and only on models where Claude Code
 // keeps the prompt cache across effort changes (see policy.ts). Everything fails open: any
-// problem leaves the session's own effort in place.
+// problem leaves the session's own effort in place. In audit mode nothing is rewritten at all:
+// each turn is scored and what Jeffort would have picked is recorded in totals of its own.
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine, Register, TurnCompleteInput, TurnStepInput } from 'claude-code'
@@ -26,10 +27,12 @@ import {
   cleanPrompt,
   decide,
   estimateSaved,
-  initialEnabled,
+  estimateWouldSave,
+  initialMode,
   isBarStyle,
   isCacheSafeModel,
   isLevel,
+  isMode,
   isSupportedVersion,
   isTheme,
   levelColor,
@@ -41,7 +44,7 @@ import {
   projectName,
   shares,
 } from './policy'
-import type { Dims, Level, Palette } from './policy'
+import type { Dims, Level, Mode, Palette } from './policy'
 
 const JEV_URL = 'https://api.typesafe.ai/v1/systemone'
 /** Per-request budget; routing must never hold up a turn for long. */
@@ -55,7 +58,7 @@ const STORE_KEY = 'jeffort'
 /** The store key this mod used before it was called Jeffort; read once to carry totals over. */
 const LEGACY_STORE_KEY = 'auto-effort'
 
-const enabled = atom({ plugin: 'jeffort', key: 'enabled' } as const, true)
+const mode = atom({ plugin: 'jeffort', key: 'mode' } as const, 'on' as Mode)
 /** This session only: what the bar draws. */
 const stats = atom({ plugin: 'jeffort', key: 'stats' } as const, emptyStats())
 /** Across sessions: kept in the store and shown by /jeffort. */
@@ -70,6 +73,12 @@ const barStyle = atom({ plugin: 'jeffort', key: 'barStyle' } as const, DEFAULT_B
 /** This session only: how many turns ran at each effort level. */
 const counts = atom({ plugin: 'jeffort', key: 'counts' } as const, mix([]) as Record<string, number>)
 const tab = atom({ plugin: 'jeffort', key: 'tab' } as const, 'stats' as PaneTab)
+// Audit mode's own totals, never mixed with the ones above: what Jeffort would have picked, against
+// the effort that actually ran. The project's are `project.auditStats`.
+const auditStats = atom({ plugin: 'jeffort', key: 'auditStats' } as const, emptyStats())
+const auditLifetime = atom({ plugin: 'jeffort', key: 'auditLifetime' } as const, emptyStats())
+const auditCounts = atom({ plugin: 'jeffort', key: 'auditCounts' } as const, mix([]) as Record<string, number>)
+const auditTurns = atom({ plugin: 'jeffort', key: 'auditTurns' } as const, [] as TurnLog[])
 
 function emptyStats(): Stats {
   return { changed: 0, applied: 0, tokensSaved: 0, usdSaved: 0, outputTokens: 0, rebuiltTokens: 0, rebuildUsd: 0 }
@@ -152,8 +161,9 @@ const approx = (figure: string): string => (figure.startsWith('-') ? `-~${figure
 
 async function persist($: Engine) {
   await $.store.set(STORE_KEY, {
-    enabled: await read($, enabled),
+    mode: await read($, mode),
     stats: await read($, lifetime),
+    auditStats: await read($, auditLifetime),
     theme: await read($, theme),
     barStyle: await read($, barStyle),
   })
@@ -168,8 +178,13 @@ async function loadProject($: Engine): Promise<Project> {
     const root = await $.session.root()
     const current = await read($, project)
     if (current?.root === root) return current
-    const saved = (await $.store.get(projectKey(root))) as { stats?: Stats } | undefined
-    const next: Project = { root, name: projectName(root), stats: { ...emptyStats(), ...saved?.stats } }
+    const saved = (await $.store.get(projectKey(root))) as { stats?: Stats; auditStats?: Stats } | undefined
+    const next: Project = {
+      root,
+      name: projectName(root),
+      stats: { ...emptyStats(), ...saved?.stats },
+      auditStats: { ...emptyStats(), ...saved?.auditStats },
+    }
     await update($, project, () => next)
     return next
   } catch {
@@ -179,11 +194,11 @@ async function loadProject($: Engine): Promise<Project> {
 
 async function persistProject($: Engine) {
   const p = await read($, project)
-  if (p) await $.store.set(projectKey(p.root), { stats: p.stats })
+  if (p) await $.store.set(projectKey(p.root), { stats: p.stats, auditStats: p.auditStats })
 }
 
-async function setEnabled($: Engine, value: boolean) {
-  await update($, enabled, () => value)
+async function setMode($: Engine, value: Mode) {
+  await update($, mode, () => value)
   await persist($)
 }
 
@@ -214,11 +229,14 @@ function addTurn(s: Stats, turn: Stats): Stats {
 }
 
 type Pick = {
+  /** Set when the pick is made, so a mode change mid-turn cannot move a turn between totals. */
+  mode: 'on' | 'audit'
   level: Level | null
   baseline: Level | null
   model: string
   score?: number
   dims?: Dims
+  confidences?: Dims
   excerpt: string
   /** Cache tokens written by the turn's first request, where an effort change rebuilds the cache. */
   firstWrite?: number
@@ -274,14 +292,34 @@ function barLegend(s: Stats): string {
 }
 
 /**
+ * The audit bar is drawn against the effort that ran: when Jeffort would have saved, the whole bar
+ * is what ran and the saved segment is part of it; when it would have spent more, the extra sits
+ * after it. `bar` draws `outputTokens` as used, so hand it what Jeffort's picks would have used.
+ */
+const auditBarStats = (s: Stats): Stats => ({ ...s, outputTokens: s.outputTokens - s.tokensSaved })
+
+function auditLegend(s: Stats): string {
+  const would = s.tokensSaved >= 0 ? `would have saved ${compact(s.tokensSaved)}` : `would have spent ${compact(-s.tokensSaved)} more`
+  return `ran ${compact(s.outputTokens)} · Jeffort ${would} output tokens · net ${approx(money(s.usdSaved))}`
+}
+
+/**
  * Scores a prompt and returns what to apply; `level` stays null (the effort in force stands) when
  * there is no prompt, no key, or Jev declines. `label` prefixes a subagent's excerpt, and only the
  * main loop writes the status line, so parallel subagents do not flicker it.
  */
-async function pickFor($: Engine, prompt: string | undefined, e: TurnStepInput, levels: readonly Level[], label = ''): Promise<Pick> {
+async function pickFor(
+  $: Engine,
+  prompt: string | undefined,
+  e: TurnStepInput,
+  levels: readonly Level[],
+  m: Pick['mode'],
+  label = '',
+): Promise<Pick> {
   const baseline = isLevel(e.effort) ? e.effort : null
   const excerpt = `${label}${(prompt ?? '').replace(/\s+/g, ' ')}`.slice(0, 80)
-  const pick: Pick = { level: null, baseline, model: e.model, excerpt }
+  const pick: Pick = { mode: m, level: null, baseline, model: e.model, excerpt }
+  const verb = m === 'audit' ? 'Jeffort audit: would pick' : 'Jeffort:'
   const status = (text: string) => (e.agentId ? undefined : $.ui.status(text))
   try {
     const auth = prompt ? await credentials($) : undefined
@@ -293,9 +331,10 @@ async function pickFor($: Engine, prompt: string | undefined, e: TurnStepInput, 
         pick.level = decision.level
         pick.score = decision.score
         pick.dims = decision.dims
-        status(`Jeffort: ${decision.level} (${decision.score.toFixed(2)}, p=${decision.confidence.toFixed(2)})`)
+        pick.confidences = decision.confidences
+        status(`${verb} ${decision.level} (${decision.score.toFixed(2)}, p=${decision.confidence.toFixed(2)})`)
       } else {
-        status(`Jeffort: kept ${String(e.effort)} (${decision?.reason ?? 'jev unavailable'})`)
+        status(`${m === 'audit' ? 'Jeffort audit: no pick,' : 'Jeffort:'} kept ${String(e.effort)} (${decision?.reason ?? 'jev unavailable'})`)
       }
     }
   } catch {
@@ -315,6 +354,7 @@ async function subagentPick(
   e: TurnStepInput & { agentId: string },
   inherited: TurnStepInput['effort'],
   levels: readonly Level[],
+  m: Pick['mode'],
 ): Promise<Pick | null> {
   if (e.effort !== inherited) return null
   const info = (await $.agent.list()).find((a) => a.id === e.agentId)
@@ -322,13 +362,17 @@ async function subagentPick(
   const found = await $.session.messages({ agentId: e.agentId })
   if ('deny' in found) return null
   const prompt = cleanPrompt(found.find((m) => m.role === 'user')?.text ?? '')
-  return prompt ? pickFor($, prompt, e, levels, `${info.type}: `) : null
+  return prompt ? pickFor($, prompt, e, levels, m, `${info.type}: `) : null
 }
 
-/** Adds an applied turn to every total; `rebuilt` is the cache it rebuilt, if any. */
+/**
+ * Adds a scored turn to every total of its mode; `rebuilt` is the cache it rebuilt, if any. An
+ * audited turn ran at its baseline, so its estimate runs from there to the pick.
+ */
 async function record($: Engine, pick: Pick & { level: Level }, usage: NonNullable<TurnCompleteInput['usage']>, rebuilt: number) {
   const out = usage.output_tokens
-  const saved = pick.baseline ? estimateSaved(out, pick.level, pick.baseline) : 0
+  const audit = pick.mode === 'audit'
+  const saved = !pick.baseline ? 0 : audit ? estimateWouldSave(out, pick.baseline, pick.level) : estimateSaved(out, pick.level, pick.baseline)
   const price = outputPrice(usage.model)
   const writePrice = cacheWritePrice(usage.model)
   const turn: Stats = {
@@ -348,12 +392,21 @@ async function record($: Engine, pick: Pick & { level: Level }, usage: NonNullab
     outputTokens: out,
     saved,
     dims: pick.dims ?? {},
+    confidences: pick.confidences ?? {},
   }
-  await update($, stats, (s) => addTurn(s, turn))
-  await update($, lifetime, (s) => addTurn(s, turn))
-  if (await loadProject($)) await update($, project, (p) => p && { ...p, stats: addTurn(p.stats, turn) })
-  await update($, turns, (list) => [...list, entry].slice(-MAX_TURN_LOG))
-  await update($, counts, (c) => ({ ...c, [pick.level]: (c[pick.level] ?? 0) + 1 }))
+  if (audit) {
+    await update($, auditStats, (s) => addTurn(s, turn))
+    await update($, auditLifetime, (s) => addTurn(s, turn))
+    if (await loadProject($)) await update($, project, (p) => p && { ...p, auditStats: addTurn(p.auditStats, turn) })
+    await update($, auditTurns, (list) => [...list, entry].slice(-MAX_TURN_LOG))
+    await update($, auditCounts, (c) => ({ ...c, [pick.level]: (c[pick.level] ?? 0) + 1 }))
+  } else {
+    await update($, stats, (s) => addTurn(s, turn))
+    await update($, lifetime, (s) => addTurn(s, turn))
+    if (await loadProject($)) await update($, project, (p) => p && { ...p, stats: addTurn(p.stats, turn) })
+    await update($, turns, (list) => [...list, entry].slice(-MAX_TURN_LOG))
+    await update($, counts, (c) => ({ ...c, [pick.level]: (c[pick.level] ?? 0) + 1 }))
+  }
   await persist($)
   await persistProject($)
 }
@@ -368,6 +421,9 @@ export const register: Register = (on, options) => {
   // Effort in effect on the previous main turn (applied or the session's own), to spot the
   // one-time cache rebuild, and kept by a turn that has no prompt to score.
   let previousLevel: Level | null = null
+  // Audit mode's counterpart: what Jeffort would have picked on the previous main turn, kept by a
+  // turn with no prompt. previousLevel stays the effort that actually ran.
+  let previousWould: Level | null = null
   // Each subagent's pick by agent id, made once on its task and reused by its later turns; null
   // where it is left alone. Forks are noted at spawn, where the engine says which ones are.
   const agentPicks = new Map<string, Pick | null>()
@@ -386,29 +442,32 @@ export const register: Register = (on, options) => {
     } catch {
       supportedVersion = false
     }
-    if (!supportedVersion) $.ui.status(`Jeffort: needs Claude Code ${MIN_CLAUDE_CODE} or later; off`)
+    if (!supportedVersion) $.ui.status(`Jeffort: needs Claude Code ${MIN_CLAUDE_CODE} or later to set effort; audit mode still works`)
     try {
       firstParty = (await $.session.authorize()) !== null
     } catch {
       // a build without session.authorize: the version gate alone decides, as before
       firstParty = true
     }
-    if (supportedVersion && !firstParty) $.ui.status('Jeffort: needs an Anthropic API key or Claude subscription; off')
-    let s: { enabled?: boolean; stats?: Stats; theme?: string; barStyle?: string } | undefined
+    if (supportedVersion && !firstParty) {
+      $.ui.status('Jeffort: needs an Anthropic API key or Claude subscription to set effort; audit mode still works')
+    }
+    let s: { mode?: unknown; enabled?: unknown; stats?: Stats; auditStats?: Stats; theme?: string; barStyle?: string } | undefined
     try {
       s = ((await $.store.get(STORE_KEY)) ?? (await $.store.get(LEGACY_STORE_KEY))) as typeof s
       if (s?.stats) await update($, lifetime, () => ({ ...emptyStats(), ...s!.stats }))
+      if (s?.auditStats) await update($, auditLifetime, () => ({ ...emptyStats(), ...s!.auditStats }))
       if (isTheme(s?.theme)) await update($, theme, () => s!.theme as string)
       if (isBarStyle(s?.barStyle)) await update($, barStyle, () => s!.barStyle as string)
     } catch {
       // first run, or an unreadable store: defaults stand
     }
-    await update($, enabled, () => initialEnabled(s?.enabled, options.enabled))
+    await update($, mode, () => initialMode(s?.mode, s?.enabled, options.enabled))
     await loadProject($)
     await $.command.register({
       name: COMMAND,
-      description: 'Open the Jeffort pane, or toggle it (on, off) and show estimated savings',
-      argumentHint: '[on|off|pane|reset|reset all]',
+      description: 'Open the Jeffort pane, switch it on, off or to audit only, and show estimated savings',
+      argumentHint: '[on|audit|off|pane|reset|reset all]',
     })
     return next(e)
   })
@@ -420,31 +479,48 @@ export const register: Register = (on, options) => {
       return { text: 'Jeffort pane opened.' }
     }
     const here = await loadProject($)
-    if (arg === 'on' || arg === 'off') await setEnabled($, arg === 'on')
+    if (isMode(arg)) await setMode($, arg)
     else if (arg === 'reset' || arg === 'reset all') {
-      // `reset` clears this session and this project; `reset all` every project and the overall total.
+      // `reset` clears this session and this project; `reset all` every project and the overall
+      // total. Audit totals go with the live ones.
       await update($, stats, () => emptyStats())
       await update($, turns, () => [])
       await update($, counts, () => mix([]))
-      if (here) await update($, project, () => ({ ...here, stats: emptyStats() }))
+      await update($, auditStats, () => emptyStats())
+      await update($, auditTurns, () => [])
+      await update($, auditCounts, () => mix([]))
+      if (here) await update($, project, () => ({ ...here, stats: emptyStats(), auditStats: emptyStats() }))
       if (arg === 'reset all') {
         await update($, lifetime, () => emptyStats())
+        await update($, auditLifetime, () => emptyStats())
         for (const key of await $.store.keys()) if (key.startsWith(PROJECT_KEY_PREFIX)) await $.store.delete(key)
       }
       await persist($)
       await persistProject($)
-    } else if (arg === '') await setEnabled($, !(await read($, enabled)))
-    const isOn = await read($, enabled)
+    } else if (arg === '') await setMode($, (await read($, mode)) === 'off' ? 'on' : 'off')
+    const m = await read($, mode)
     const proj = await read($, project)
     const line = (label: string, s: Stats) =>
       `${label}: ${s.changed} of ${s.applied} turns changed effort; ${approx(compact(s.tokensSaved))} output tokens saved ` +
       `(${approx(money(s.usdSaved))}) minus ${compact(s.rebuiltTokens)} cache tokens rebuilt ` +
       `(${approx(money(s.rebuildUsd))}) = ${approx(money(net(s)))} net.`
+    const auditLine = (label: string, s: Stats) =>
+      `${label}: Jeffort would have changed ${s.changed} of ${s.applied} turns; ${auditLegend(s)}.`
+    const allAudit = await read($, auditLifetime)
+    const audit =
+      allAudit.applied > 0
+        ? '\nAudit (what Jeffort would have done, effort unchanged):\n' +
+          `${auditLine('This session', await read($, auditStats))}\n` +
+          (proj ? `${auditLine(`This project (${proj.name})`, proj.auditStats)}\n` : '') +
+          `${auditLine('All projects', allAudit)}\n`
+        : ''
+    const state = m === 'audit' ? 'auditing only (effort unchanged)' : m
     return {
       text:
-        `Jeffort is ${isOn ? 'on' : 'off'}.\n${line('This session', await read($, stats))}\n` +
+        `Jeffort is ${state}.\n${line('This session', await read($, stats))}\n` +
         (proj ? `${line(`This project (${proj.name})`, proj.stats)}\n` : '') +
         `${line('All projects', await read($, lifetime))}\n` +
+        audit +
         'Dollar figures cover Opus 5.5 and Sonnet 5.5 only; all savings are estimates from fixed per-level output ratios.',
     }
   })
@@ -466,12 +542,15 @@ export const register: Register = (on, options) => {
   on('turn.step', async function* ($, e, next) {
     // What a subagent inherits: the main loop's effort before Jeffort rewrites it.
     if (!e.agentId) mainEffort = e.effort
-    // Models, providers or Claude Code versions that would lose the cache are left alone: Jev is
-    // never called for them.
-    const skip = e.effort === undefined || !supportedVersion || !firstParty || !isCacheSafeModel(e.model)
-    if (skip || !(await read($, enabled))) {
+    const m = await read($, mode)
+    // A turn with no effort has no baseline to set or compare against. When effort is set, models,
+    // providers or Claude Code versions that would lose the cache are left alone: Jev is never
+    // called for them. Audit mode changes nothing, so it runs on those too.
+    const unsafe = !supportedVersion || !firstParty || !isCacheSafeModel(e.model)
+    if (e.effort === undefined || m === 'off' || (m === 'on' && unsafe)) {
       return yield* next(e)
     }
+    const applies = (pick: Pick | null | undefined): pick is Pick & { level: Level } => !!pick?.level && pick.mode === 'on'
 
     if (e.agentId) {
       if (!options.subagents) return yield* next(e)
@@ -481,14 +560,14 @@ export const register: Register = (on, options) => {
         try {
           pick = forks.has(e.agentId)
             ? null
-            : await subagentPick($, { ...e, agentId: e.agentId }, mainEffort, allowedLevels(options.floor, options.ceiling))
+            : await subagentPick($, { ...e, agentId: e.agentId }, mainEffort, allowedLevels(options.floor, options.ceiling), m)
         } catch {
           // fail open: the subagent's effort stands
         }
         agentPicks.set(e.agentId, pick)
       }
       const chosen = agentPicks.get(e.agentId)
-      return yield* next(chosen?.level ? { ...e, effort: chosen.level } : e)
+      return yield* next(applies(chosen) ? { ...e, effort: chosen.level } : e)
     }
 
     if (!picks.has(e.turnId)) {
@@ -496,16 +575,19 @@ export const register: Register = (on, options) => {
       const prompt = prompts.get(e.turnId)
       prompts.delete(e.turnId)
       // A turn with no prompt (a continuation, or a subagent's hand-back) keeps the last turn's level.
+      const prior = m === 'audit' ? previousWould : previousLevel
       const pick: Pick =
-        prompt || !previousLevel
-          ? await pickFor($, prompt, e, allowedLevels(options.floor, options.ceiling))
-          : { level: previousLevel, baseline: isLevel(e.effort) ? e.effort : null, model: e.model, excerpt: '(no prompt: kept last level)' }
+        prompt || !prior
+          ? await pickFor($, prompt, e, allowedLevels(options.floor, options.ceiling), m)
+          : { mode: m, level: prior, baseline: isLevel(e.effort) ? e.effort : null, model: e.model, excerpt: '(no prompt: kept last level)' }
       picks.set(e.turnId, pick)
-      if (pick.level && prompt) await update($, last, () => ({ level: pick.level!, baseline: String(e.effort), score: pick.score ?? 0 }))
+      if (pick.level && prompt) {
+        await update($, last, () => ({ level: pick.level!, baseline: String(e.effort), score: pick.score ?? 0, mode: m }))
+      }
     }
 
     const chosen = picks.get(e.turnId)
-    const result = yield* next(chosen?.level ? { ...e, effort: chosen.level } : e)
+    const result = yield* next(applies(chosen) ? { ...e, effort: chosen.level } : e)
     if (chosen && e.index === 0 && result.usage) chosen.firstWrite = result.usage.cache_creation_input_tokens
     return result
   })
@@ -521,6 +603,14 @@ export const register: Register = (on, options) => {
     const pick = picks.get(e.turnId)
     picks.delete(e.turnId)
     prompts.delete(e.turnId)
+    if (pick?.mode === 'audit') {
+      // Nothing changed, so a large first write is a compaction, never a rebuild, and the effort
+      // that ran is the baseline.
+      previousLevel = pick.baseline ?? previousLevel
+      previousWould = pick.level ?? previousWould
+      if (pick.level && e.usage) await record($, { ...pick, level: pick.level }, e.usage, 0)
+      return next(e)
+    }
     const before = previousLevel
     if (pick) previousLevel = pick.level ?? pick.baseline ?? previousLevel
     if (pick?.level && e.usage) {
@@ -534,12 +624,16 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
     const { Box, Button, Text } = $.ui.resolve(e)
-    const isOn = await read($, enabled)
-    const s = await read($, stats)
-    const l = await read($, last)
+    const m = await read($, mode)
+    const isOn = m !== 'off'
+    const isAudit = m === 'audit'
+    // Audit mode draws its own totals; neither mode's figures ever show under the other.
+    const s = isAudit ? await read($, auditStats) : await read($, stats)
+    const shown = await read($, last)
+    const l = shown?.mode === m ? shown : null
     const p = paletteOf(await read($, theme))
     const style = await read($, barStyle)
-    const c = await read($, counts)
+    const c = isAudit ? await read($, auditCounts) : await read($, counts)
     const hasBar = isOn && s.applied > 0 && s.outputTokens + Math.abs(s.tokensSaved) > 0
     // A band taller than its room scrolls, leaving only the first row in view: an open pane or
     // the task list can squeeze it to one or two rows. Drop rows from the bottom instead, and
@@ -551,22 +645,24 @@ export const register: Register = (on, options) => {
       ? null
       : style === 'mix'
         ? `· net ${approx(money(net(s)))}`
-        : `· ${approx(compact(s.tokensSaved))} saved · net ${approx(money(net(s)))}`
+        : isAudit
+          ? `· would ${s.tokensSaved >= 0 ? 'save' : 'spend'} ${approx(compact(Math.abs(s.tokensSaved)))} · net ${approx(money(net(s)))}`
+          : `· ${approx(compact(s.tokensSaved))} saved · net ${approx(money(net(s)))}`
 
     return (
       <Box flexDirection="column">
         <Box>
           <Button key="open" label="Jeffort" onPress={() => openPane($)} />
-          <Text dimColor> {isOn ? 'on · ' : 'off '}</Text>
+          <Text dimColor> {isAudit ? 'audit · would pick ' : isOn ? 'on · ' : 'off '}</Text>
           {isOn && l ? (
             <Text color={levelColor(p, l.level)}>
               {l.level}
-              {l.baseline !== l.level ? ` (was ${l.baseline})` : ''}{' '}
+              {isAudit ? ` (running ${l.baseline})` : l.baseline !== l.level ? ` (was ${l.baseline})` : ''}{' '}
             </Text>
           ) : isOn ? (
-            <Text dimColor>waiting for a turn </Text>
+            <Text dimColor>{isAudit ? 'after the next turn ' : 'waiting for a turn '}</Text>
           ) : null}
-          <Button key="toggle" label={isOn ? 'Turn off' : 'Turn on'} onPress={() => setEnabled($, !isOn)} />
+          <Button key="toggle" label={isOn ? 'Turn off' : 'Turn on'} onPress={() => setMode($, isOn ? 'off' : 'on')} />
           {brief ? (
             <Text dimColor wrap="truncate-end">
               {' '}
@@ -586,10 +682,10 @@ export const register: Register = (on, options) => {
           </Box>
         ) : showBar ? (
           <Box flexDirection="column">
-            {bar({ Box, Text }, p, s)}
+            {bar({ Box, Text }, p, isAudit ? auditBarStats(s) : s)}
             {showLegend ? (
               <Text dimColor wrap="truncate-end">
-                this session, est.: {barLegend(s)}
+                this session, est.: {isAudit ? auditLegend(s) : barLegend(s)}
               </Text>
             ) : null}
           </Box>
@@ -600,11 +696,13 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Button, Text } = $.ui.resolve(e)
-    const isOn = await read($, enabled)
+    const m = await read($, mode)
+    const isAudit = m === 'audit'
     const current = await read($, tab)
     const themeId = await read($, theme)
     const styleId = await read($, barStyle)
-    const sessionCounts = await read($, counts)
+    // The stats follow the mode: audit's own totals while auditing, the live ones otherwise.
+    const sessionCounts = isAudit ? await read($, auditCounts) : await read($, counts)
     const p = paletteOf(themeId)
     const rows = e.viewport?.rows ?? 24
 
@@ -672,10 +770,19 @@ export const register: Register = (on, options) => {
       )
     }
 
-    const s = await read($, stats)
-    const all = await read($, lifetime)
+    const s = isAudit ? await read($, auditStats) : await read($, stats)
+    const all = isAudit ? await read($, auditLifetime) : await read($, lifetime)
     const proj = await read($, project)
-    const log = await read($, turns)
+    const projStats = proj && (isAudit ? proj.auditStats : proj.stats)
+    const log = isAudit ? await read($, auditTurns) : await read($, turns)
+    const modeButton = (id: Mode, label: string) => (
+      <Button key={`mode-${id}`} label={`${m === id ? '●' : '○'} ${label}`} onPress={() => setMode($, id)} />
+    )
+    const totals = (label: string, t: Stats) =>
+      isAudit
+        ? `${label}: would have changed ${t.changed} of ${t.applied} turns · would ${t.tokensSaved >= 0 ? 'save' : 'spend'} ` +
+          `${approx(compact(Math.abs(t.tokensSaved)))} tokens · net ${approx(money(net(t)))}`
+        : `${label}: ${t.changed} of ${t.applied} turns changed · ${approx(compact(t.tokensSaved))} tokens saved · net ${approx(money(net(t)))}`
     const levels = Object.fromEntries(LEVELS.map((l) => [l, sessionCounts[l] ?? 0])) as Record<Level, number>
     const peak = Math.max(1, ...Object.values(levels))
     const room = Math.max(3, rows - 16)
@@ -684,26 +791,33 @@ export const register: Register = (on, options) => {
     return (
       <Box flexDirection="column" gap={1}>
         {tabs}
-        <Box>
-          <Text bold>Jeffort </Text>
-          <Text dimColor>{isOn ? 'on ' : 'off '}</Text>
-          <Button key="toggle" label={isOn ? 'Turn off' : 'Turn on'} onPress={() => setEnabled($, !isOn)} />
+        <Box flexDirection="column">
+          <Box gap={2}>
+            <Text bold>Jeffort</Text>
+            {modeButton('on', 'On')}
+            {modeButton('audit', 'Audit only')}
+            {modeButton('off', 'Off')}
+          </Box>
+          <Text dimColor>
+            {isAudit
+              ? 'Audit only: every turn is scored, effort is never changed. These totals are kept apart from the live ones.'
+              : m === 'on'
+                ? 'On: sets the effort Jeffort picks for each turn.'
+                : 'Off: turns are left alone and not scored.'}
+          </Text>
         </Box>
         {/* No bar here: the band below already draws it, and the level rows show the mix. */}
         <Box flexDirection="column">
-          <Text dimColor>{scored ? `This session, est.: ${barLegend(s)}` : 'No turns scored yet this session.'}</Text>
-          {proj ? (
-            <Text dimColor>
-              This project ({proj.name}): {proj.stats.changed} of {proj.stats.applied} turns changed ·{' '}
-              {approx(compact(proj.stats.tokensSaved))} tokens saved · net {approx(money(net(proj.stats)))}
-            </Text>
-          ) : null}
           <Text dimColor>
-            All projects: {all.changed} of {all.applied} turns changed · {approx(compact(all.tokensSaved))} tokens saved · net {approx(money(net(all)))}
+            {scored
+              ? `This session, est.: ${isAudit ? auditLegend(s) : barLegend(s)}`
+              : `No turns ${isAudit ? 'audited' : 'scored'} yet this session.`}
           </Text>
+          {proj && projStats ? <Text dimColor>{totals(`This project (${proj.name})`, projStats)}</Text> : null}
+          <Text dimColor>{totals('All projects', all)}</Text>
         </Box>
         <Box flexDirection="column">
-          <Text dimColor>Where this session's turns landed</Text>
+          <Text dimColor>{isAudit ? "Where Jeffort would have put this session's turns" : "Where this session's turns landed"}</Text>
           {(['low', 'medium', 'high', 'xhigh', 'max'] as const).map((lv) => (
             <Box key={`mix-${lv}`}>
               <Box width={8}>
@@ -718,7 +832,9 @@ export const register: Register = (on, options) => {
           ))}
         </Box>
         <Box flexDirection="column">
-          <Text dimColor>Last turns (newest first, this session only)</Text>
+          <Text dimColor>
+            {isAudit ? 'Last turns: would pick ← ran (newest first, this session only)' : 'Last turns (newest first, this session only)'}
+          </Text>
           {log.length === 0 ? <Text dimColor>None yet.</Text> : null}
           {[...log].reverse().slice(0, room).map((t, i) => (
             <Box key={`turn-${t.at}-${i}`} gap={1}>

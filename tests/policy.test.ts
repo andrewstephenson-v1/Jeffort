@@ -43,6 +43,7 @@ test('composite maps linearly onto the allowed levels', () => {
   expect(decide(dims(1.5, 0.9), levels)).toMatchObject({ level: 'high' })
   expect(decide(dims(3, 0.9), levels)).toMatchObject({ level: 'xhigh' })
   expect(decide(dims(9, 0.9), levels)).toMatchObject({ level: 'xhigh' })
+  expect(decide(dims(1, 0.6), levels)).toMatchObject({ confidences: { depth: 0.6, scope: 0.6, stakes: 0.6, ambiguity: 0.6 } })
 })
 
 test('depth carries the most weight', () => {
@@ -127,15 +128,28 @@ test('shares are whole percentages that always sum to 100', () => {
   expect(sum).toBe(100)
 })
 
-import { initialEnabled, projectKey, projectName } from '../hooks/policy'
+import { estimateWouldSave, initialMode, projectKey, projectName } from '../hooks/policy'
 
-test('the enabled setting set to false wins over the stored toggle', () => {
-  expect(initialEnabled(true, false)).toBe(false)
-  expect(initialEnabled(undefined, false)).toBe(false)
-  expect(initialEnabled(false, true)).toBe(false)
-  expect(initialEnabled(true, undefined)).toBe(true)
-  expect(initialEnabled(undefined, undefined)).toBe(true)
-  expect(initialEnabled('yes', true)).toBe(true)
+test('the enabled setting set to false wins over the stored mode, and an old toggle still counts', () => {
+  expect(initialMode('on', true, false)).toBe('off')
+  expect(initialMode('audit', undefined, false)).toBe('off')
+  expect(initialMode(undefined, undefined, false)).toBe('off')
+  expect(initialMode('audit', undefined, true)).toBe('audit')
+  expect(initialMode('off', undefined, undefined)).toBe('off')
+  expect(initialMode(undefined, false, true)).toBe('off')
+  expect(initialMode(undefined, true, undefined)).toBe('on')
+  expect(initialMode(undefined, undefined, undefined)).toBe('on')
+  expect(initialMode('loud', 'yes', true)).toBe('on')
+})
+
+test('audit estimates run from the measured level to the pick, live ones the other way', () => {
+  // 1000 tokens measured at high; picking low would have produced 550, so 450 saved.
+  expect(estimateWouldSave(1000, 'high', 'low')).toBe(450)
+  // 1000 tokens measured at high; picking xhigh would have produced 1700, so 700 more.
+  expect(estimateWouldSave(1000, 'high', 'xhigh')).toBe(-700)
+  expect(estimateWouldSave(1000, 'medium', 'medium')).toBe(0)
+  // Live: 550 tokens measured at low, against a high baseline that would have produced 1000.
+  expect(estimateSaved(550, 'low', 'high')).toBe(450)
 })
 
 test('projects are keyed by full path and named by their last segment', () => {

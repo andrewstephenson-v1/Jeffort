@@ -50,12 +50,21 @@ export const assistantOf = (model: string): { name: string; description?: string
 export const isLevel = (v: unknown): v is Level => LEVELS.includes(v as Level)
 
 /**
- * Whether Jeffort starts a session on. The `enabled` setting set to false wins; otherwise the last
- * `/jeffort` toggle stands, and a first run is on.
+ * What Jeffort does with a turn: `on` sets the effort it picks, `audit` scores the turn and records
+ * what it would have picked while the session's own effort runs, `off` leaves the turn alone.
  */
-export function initialEnabled(stored: unknown, configured: unknown): boolean {
-  if (configured === false) return false
-  return typeof stored === 'boolean' ? stored : true
+export const MODES = ['on', 'audit', 'off'] as const
+export type Mode = (typeof MODES)[number]
+export const isMode = (v: unknown): v is Mode => MODES.includes(v as Mode)
+
+/**
+ * The mode a session starts in. The `enabled` setting set to false wins; otherwise the last mode
+ * `/jeffort` set stands (or, from before audit mode, its on/off toggle), and a first run is on.
+ */
+export function initialMode(storedMode: unknown, storedEnabled: unknown, configured: unknown): Mode {
+  if (configured === false) return 'off'
+  if (isMode(storedMode)) return storedMode
+  return storedEnabled === false ? 'off' : 'on'
 }
 
 /** Store keys for per-project totals start with this; the rest is the project root in full. */
@@ -161,7 +170,7 @@ export function buildRequest(prompt: string, assistantModel: string, model = 'je
 export type Dims = Record<Dimension, number>
 
 export type Decision =
-  | { level: Level; score: number; confidence: number; dims: Dims }
+  | { level: Level; score: number; confidence: number; dims: Dims; confidences: Dims }
   | { level: null; reason: string }
 
 /**
@@ -174,6 +183,7 @@ export function decide(body: unknown, levels: readonly Level[]): Decision {
   let composite = 0
   let confidence = 0
   const dims = {} as Dims
+  const confidences = {} as Dims
   for (const d of DIMENSION_NAMES) {
     const a = answers?.[d]
     const score = a?.score
@@ -183,6 +193,7 @@ export function decide(body: unknown, levels: readonly Level[]): Decision {
     }
     const w = DIMENSIONS[d].weight
     dims[d] = score
+    confidences[d] = conf
     composite += w * Math.min(1, Math.max(0, score / DIMENSION_MAX))
     confidence += w * conf
   }
@@ -190,7 +201,7 @@ export function decide(body: unknown, levels: readonly Level[]): Decision {
   const index = Math.round(composite * (levels.length - 1))
   const level = levels[index]
   if (!level) return { level: null, reason: 'no-levels' }
-  return { level, score: composite, confidence, dims }
+  return { level, score: composite, confidence, dims, confidences }
 }
 
 /**
@@ -247,6 +258,17 @@ export const outputPrice = (model: string): number | undefined => OUTPUT_PRICE.f
 export function estimateSaved(outputTokens: number, chosen: Level, baseline: Level): number {
   const atBaseline = (outputTokens * OUTPUT_MULTIPLIER[baseline]) / OUTPUT_MULTIPLIER[chosen]
   return Math.round(atBaseline - outputTokens)
+}
+
+/**
+ * Audit mode's estimate: output tokens that running `pick` would have saved, given the tokens the
+ * turn actually produced at `baseline`. Not `estimateSaved` with its arguments swapped: here the
+ * measured tokens are at the session's level, so the pick's are the estimate. Negative when the
+ * pick is the higher level.
+ */
+export function estimateWouldSave(outputTokens: number, baseline: Level, pick: Level): number {
+  const atPick = (outputTokens * OUTPUT_MULTIPLIER[pick]) / OUTPUT_MULTIPLIER[baseline]
+  return Math.round(outputTokens - atPick)
 }
 
 /** Parses `KEY=value` lines of a .env file, ignoring comments and surrounding quotes. */

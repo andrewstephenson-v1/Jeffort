@@ -27,6 +27,12 @@ Or, if you pick the Effort mix style, the share of turns at each level:
 
 ![The Jeffort band in Effort mix style: a bar split half medium, half high, with the percentages underneath](docs/images/band-mix.png)
 
+### Audit only
+
+Not ready to let Jeffort change anything? `/jeffort audit`, or **Audit only** in the pane, scores every turn and records what Jeffort would have picked, while your own effort runs untouched. The band then reads `audit · would pick xhigh (running medium)`, and its bar shows what you ran against what Jeffort's picks would have saved or spent. Audit totals are kept apart from the live ones, for the session, the project and all projects, so you can compare before switching on.
+
+It is also a cheap way to see how your effort is spread: the Effort mix style shows where Jeffort would have put each turn.
+
 The band steps aside while Claude Code shows a feedback survey in the same spot. Answer or dismiss it (`0`) and the band returns. When space below the transcript is tight, the band drops its legend and then its bar, keeping the net figure on its first line.
 
 Click **Jeffort** for a pane with this session's, this project's and all projects' totals, and where this session's turns landed. It also lists the last few turns with the level Jeffort picked over your own:
@@ -85,8 +91,8 @@ If a turn shows `Jeffort: no TYPESAFE_API_KEY found`, none of those places had a
 
 ## Usage
 
-- `/jeffort` toggles it. `/jeffort on`, `off` and `pane` also work.
-- `/jeffort reset` clears this session's and this project's totals; `/jeffort reset all` clears every project and the overall total.
+- `/jeffort` toggles it on and off. `/jeffort on`, `audit`, `off` and `pane` also work, and the pane has the same three modes.
+- `/jeffort reset` clears this session's and this project's totals, live and audit; `/jeffort reset all` clears every project and the overall totals.
 - Totals are kept for this session, this project and all projects. A project is the session's project root, keyed by its full path, so two folders with the same name stay separate. A git worktree counts as its own project.
 - **Appearance** tab: Default, Signal, Mono, Colour-safe, Retro, or Match terminal.
 - Settings (`/config`): the lowest and highest level Jeffort may pick (`max` is off by default), and whether it sets effort for subagents too (on by default).
@@ -102,6 +108,8 @@ Jeffort only rewrites effort where Claude Code keeps the prompt cache across eff
 | Sonnet 5.5 | 2.1.284 | 2026-09-28 | First release with the model |
 
 That only holds with an Anthropic API key or a Claude subscription. It does not hold on Bedrock, Google Cloud's Agent Platform, a Claude apps gateway, with `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` set, or under an organization HIPAA configuration. Source: [Claude Code docs, "Changing effort level"](https://code.claude.com/docs/en/prompt-caching#changing-effort-level).
+
+Audit mode changes nothing, so it runs on any model and provider where the session has an effort level, including Bedrock, Vertex and older models.
 
 Jeffort currently needs Claude Code 2.1.284 or later for all three models. It detects Bedrock, Vertex and gateways and does nothing there, but it cannot yet detect `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` or a HIPAA configuration, so turn it off in those setups.
 
@@ -125,6 +133,8 @@ Turn it off with the **Subagents too** setting in `/config`.
 ## What the savings numbers are
 
 Estimates. They assume fixed output-token ratios per effort level, relative to high: low 0.55, medium 0.75, high 1.0, xhigh 1.7, max 2.2. Low and xhigh are rounded from the coding benchmark in `bench/` (0.58 and 1.80). Medium is interpolated and max is a guess: neither was measured. Dollar figures cover Opus 5.5 and Sonnet 5.5 only.
+
+Audit estimates run the same ratios the other way: the tokens were measured at your effort, and the estimate is what Jeffort's pick would have produced. They leave out the one-time cache rebuild that switching on would cost (see When it acts).
 
 ## Benchmarks
 

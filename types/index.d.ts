@@ -15,9 +15,10 @@ export type Stats = {
   rebuildUsd: number
 }
 
-export type Last = { level: string; baseline: string; score: number } | null
+/** The latest main-loop pick, and whether it was applied (`on`) or only recorded (`audit`). */
+export type Last = { level: string; baseline: string; score: number; mode: 'on' | 'audit' } | null
 
-/** One applied turn, kept in memory for this session only (never written to disk). */
+/** One scored turn, kept in memory for this session only (never written to disk). */
 export type TurnLog = {
   at: number
   /** The first 80 characters of the prompt, one line. */
@@ -28,19 +29,29 @@ export type TurnLog = {
   saved: number
   /** Jev's raw 0-3 score for each dimension. */
   dims: Record<string, number>
+  /** Jev's confidence in each of those scores, 0-1. */
+  confidences: Record<string, number>
 }
 
-/** The current project's totals across sessions, kept in the store under its full root path. */
-export type Project = { root: string; name: string; stats: Stats } | null
+/**
+ * The current project's totals across sessions, kept in the store under its full root path. In
+ * `auditStats`, `tokensSaved` is what Jeffort's picks would have saved against the effort that ran,
+ * and `outputTokens` the tokens that actually ran.
+ */
+export type Project = { root: string; name: string; stats: Stats; auditStats: Stats } | null
 
 export type PaneTab = 'stats' | 'look'
 
 declare module 'claude-code' {
   interface PluginState {
     jeffort: {
-      enabled: boolean
+      mode: 'on' | 'audit' | 'off'
       stats: Stats
       lifetime: Stats
+      auditStats: Stats
+      auditLifetime: Stats
+      auditCounts: Record<string, number>
+      auditTurns: TurnLog[]
       project: Project
       last: Last
       theme: string

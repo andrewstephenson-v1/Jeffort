@@ -52,6 +52,11 @@ test('pane has both tabs and every theme on every surface', async ($, on) => {
     expect((await ui.find({ key: 'bar-mix' }))?.text).toContain('●')
     await ui.press({ key: 'tab-stats' })
     expect(await ui.find({ type: 'Text', text: /No turns scored yet/ })).toBeDefined()
+    for (const id of ['on', 'audit', 'off']) expect(await ui.find({ key: `mode-${id}` })).toBeDefined()
+    await ui.press({ key: 'mode-audit' })
+    expect((await ui.find({ key: 'mode-audit' }))?.text).toContain('●')
+    expect(await ui.find({ type: 'Text', text: /No turns audited yet/ })).toBeDefined()
+    await ui.press({ key: 'mode-on' })
     await ui.unmount()
   }
 })
