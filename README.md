@@ -41,10 +41,9 @@ The same band and pane work in the Code tab, where the pane docks beside the tra
 
 ![The Jeffort band in the desktop app: medium (was high), a bar split low 14%, medium 79%, high 7%, net ~$0.21](docs/images/desktop-band.png)
 
-<p>
-  <img src="docs/images/desktop-pane-stats.png" alt="The Jeffort pane's Stats tab in the desktop app: session and project totals, and a bar per effort level" width="49%">
-  <img src="docs/images/desktop-pane-appearance.png" alt="The Jeffort pane's Appearance tab in the desktop app: themes with colour swatches, and the Savings and Effort mix bar styles" width="49%">
-</p>
+![The Jeffort pane's Stats tab in the desktop app: session and project totals, and a bar per effort level](docs/images/desktop-pane-stats.png)
+
+![The Jeffort pane's Appearance tab in the desktop app: themes with colour swatches, and the Savings and Effort mix bar styles](docs/images/desktop-pane-appearance.png)
 
 ## Install
 
