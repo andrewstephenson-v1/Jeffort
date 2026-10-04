@@ -248,3 +248,73 @@ test('the band drops its legend, then its bar, as its room shrinks, keeping the 
   expect(await one.find({ key: 'toggle' })).toBeDefined()
   await one.unmount()
 })
+
+const auditOverall = (w: { store: Map<string, unknown> }) =>
+  ((w.store.get('jeffort') as { auditStats?: Record<string, number> } | undefined)?.auditStats ?? {}) as Record<string, number>
+const auditProject = (w: { store: Map<string, unknown> }, root: string) =>
+  (w.store.get(`project:${root}`) as { auditStats?: Record<string, number> } | undefined)?.auditStats
+
+test('audit mode scores every turn but never changes effort, and keeps its own totals', async ($, on) => {
+  const w = world(on, (p) => (p === 'hard' ? 3 : 0))
+  await start($, w)
+  await $.command.run({ command: 'jeffort', args: 'audit' })
+  await turn($, 'a1', 'easy')
+  await turn($, 'a2', 'hard')
+  await turn($, 'a3', '')
+  expect(w.asked).toEqual(['easy', 'hard'])
+  for (const id of ['a1', 'a2', 'a3']) expect(w.effort.get(id)).toBe('high')
+  // Live totals untouched; audit totals under the main key and the project, never a rebuild.
+  expect(overall(w).applied ?? 0).toBe(0)
+  expect(auditOverall(w).applied).toBe(3)
+  expect(auditOverall(w).rebuiltTokens).toBe(0)
+  expect(auditProject(w, w.root)?.applied).toBe(3)
+  // easy at low would save on 1000 tokens run at high; hard at xhigh twice would spend more.
+  expect(auditOverall(w).tokensSaved).toBe(450 - 700 - 700)
+  const shown = await $.command.run({ command: 'jeffort', args: 'stats' })
+  expect(shown.text).toMatch(/auditing only/)
+  expect(shown.text).toMatch(/would have changed 3 of 3 turns/)
+})
+
+test('audit mode runs where setting effort would lose the cache', async ($, on) => {
+  const w = world(on, () => 3)
+  w.firstParty = false
+  await start($, w)
+  await $.command.run({ command: 'jeffort', args: 'audit' })
+  await turn($, 'b1', 'hard')
+  expect(w.asked).toEqual(['hard'])
+  expect(w.effort.get('b1')).toBe('high')
+  expect(auditOverall(w).applied).toBe(1)
+})
+
+test('switching from audit to on counts each turn in its own mode, and reset clears both', async ($, on) => {
+  const w = world(on, (p) => (p === 'hard' ? 3 : 0))
+  await start($, w)
+  await $.command.run({ command: 'jeffort', args: 'audit' })
+  await turn($, 'c1', 'hard')
+  await $.command.run({ command: 'jeffort', args: 'on' })
+  await turn($, 'c2', 'easy')
+  expect(w.effort.get('c1')).toBe('high')
+  expect(w.effort.get('c2')).toBe('low')
+  expect(auditOverall(w).applied).toBe(1)
+  expect(overall(w).applied).toBe(1)
+  // The first live change after audit is measured against the effort that actually ran (high).
+  expect(overall(w).changed).toBe(1)
+  await $.command.run({ command: 'jeffort', args: 'reset all' })
+  expect(auditOverall(w).applied).toBe(0)
+  expect(overall(w).applied).toBe(0)
+  expect(auditProject(w, w.root)?.applied ?? 0).toBe(0)
+})
+
+test('the band says what audit mode would pick, and its toggle turns Jeffort off', async ($, on) => {
+  const w = world(on, () => 3)
+  await start($, w)
+  await $.command.run({ command: 'jeffort', args: 'audit' })
+  await turn($, 'd1', 'hard')
+  const ui = await $.ui.mount({ plugin: 'jeffort', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, maxRows: 3 } })
+  expect(await ui.find({ type: 'Text', text: /audit · would pick/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /xhigh \(running high\)/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /would have spent/ })).toBeDefined()
+  await ui.press({ key: 'toggle' })
+  expect((await ui.find({ key: 'toggle' }))?.text).toBe('Turn on')
+  await ui.unmount()
+})
