@@ -1,8 +1,25 @@
 # Jeffort
 
-A Claude Code mod that sets Claude's effort level for each turn. [TypeSafe Jev](https://docs.typesafe.ai) scores your prompt on four narrow questions (reasoning depth, scope, stakes, ambiguity), and Jeffort maps the result onto an effort level. The model is never touched.
+A Claude Code mod that sets Claude's effort level for each turn, automatically. [TypeSafe Jev](https://docs.typesafe.ai) scores your prompt on four narrow questions (reasoning depth, scope, stakes, ambiguity), and Jeffort maps the result onto an effort level. The model is never touched.
 
-A band above the prompt shows the level it picked, an on/off button, and a bar of the estimated output tokens saved this session. Click **Jeffort** for a pane with stats and a theme picker.
+## Why I built it
+
+I don't want to micromanage effort. On the newest models, changing it mid-session no longer throws away the prompt cache, but that only made switching cheap. It didn't make it something I want to keep doing by hand. Claude Code should adjust effort on its own, the way auto mode handles permissions.
+
+Getting it wrong costs either way:
+
+- **Too high** and you burn tokens on turns that didn't need them.
+- **Too low** and the result can be below par, or need redoing, which costs more tokens than getting it right the first time.
+
+Jeffort picks the level per turn, aiming for the best result and saving money where a turn doesn't need much. A Jev call costs very little next to the output tokens it can save.
+
+If you normally run complex projects on medium, expect Jeffort to pick higher levels quite often. That isn't Jeffort overspending: it's the effort those turns needed, which a fixed medium was quietly under-serving.
+
+I hope and expect Anthropic to ship auto-effort at some point, and I also hope auto-model follows. Jeffort leaves the model alone because switching models mid-session still rebuilds the whole cache.
+
+## What you see
+
+A band above the prompt shows the level it picked, an on/off button, and a bar of the estimated output tokens saved this session (or the mix of levels, if you pick that style). Click **Jeffort** for a pane with stats and a theme picker.
 
 ## Install
 
@@ -48,7 +65,17 @@ If a turn shows `Jeffort: no TYPESAFE_API_KEY found`, none of those places had a
 
 ## When it acts
 
-Jeffort only rewrites effort on Opus 5.5, Sonnet 5.5 and Fable 5.1, with an API key or a Claude subscription. Those are the models where Claude Code keeps the prompt cache across effort changes. Anywhere else (Bedrock, Vertex, a Claude apps gateway, older models) it does nothing. Needs Claude Code 2.1.284 or later.
+Jeffort only rewrites effort where Claude Code keeps the prompt cache across effort changes. On every other model, each effort level has its own cache, so a change would rebuild the whole conversation.
+
+| Model | Keeps the cache from Claude Code | Released | Note |
+|---|---|---|---|
+| Fable 5.1 | 2.1.260 | 2026-09-03 | Earlier versions rebuilt the cache on every effort change |
+| Opus 5.5 | 2.1.280 | 2026-09-22 | First release with the model |
+| Sonnet 5.5 | 2.1.284 | 2026-09-28 | First release with the model |
+
+That only holds with an Anthropic API key or a Claude subscription. It does not hold on Bedrock, Google Cloud's Agent Platform, a Claude apps gateway, with `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` set, or under an organization HIPAA configuration. Source: [Claude Code docs, "Changing effort level"](https://code.claude.com/docs/en/prompt-caching#changing-effort-level).
+
+Jeffort currently needs Claude Code 2.1.284 or later for all three models. It detects Bedrock, Vertex and gateways and does nothing there, but it cannot yet detect `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` or a HIPAA configuration, so turn it off in those setups.
 
 It also leaves these alone, so your own `/effort` stands:
 
