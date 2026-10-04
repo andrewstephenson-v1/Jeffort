@@ -43,7 +43,9 @@ The same band and pane work in the Code tab, where the pane docks beside the tra
 
 ![The Jeffort pane's Stats tab in the desktop app: session and project totals, and a bar per effort level](docs/images/desktop-pane-stats.png)
 
-![The Jeffort pane's Appearance tab in the desktop app: themes with colour swatches, and the Savings and Effort mix bar styles](docs/images/desktop-pane-appearance.png)
+![The Jeffort pane's Appearance tab in the desktop app: themes Default, Signal, Mono, Colour-safe, Retro and Match terminal, each with colour swatches](docs/images/desktop-pane-appearance.png)
+
+![The band bar style options: Savings, used against estimated saved, and Effort mix, the share of turns at each level](docs/images/desktop-pane-bar-style.png)
 
 ## Install
 
