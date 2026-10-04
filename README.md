@@ -27,6 +27,8 @@ Or, if you pick the Effort mix style, the share of turns at each level:
 
 ![The Jeffort band in Effort mix style: a bar split half medium, half high, with the percentages underneath](docs/images/band-mix.png)
 
+The band steps aside while Claude Code shows a feedback survey in the same spot. Answer or dismiss it (`0`) and the band returns. When space below the transcript is tight, the band drops its legend and then its bar, keeping the net figure on its first line.
+
 Click **Jeffort** for a pane with this session's, this project's and all projects' totals, and where this session's turns landed. It also lists the last few turns with the level Jeffort picked over your own:
 
 ![The Jeffort pane's Stats tab: session and project totals, and a bar per effort level](docs/images/pane-stats.png)
