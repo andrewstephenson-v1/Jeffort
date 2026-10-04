@@ -19,11 +19,12 @@ I hope and expect Anthropic to ship auto-effort at some point, and I also hope a
 
 ## What you see
 
-The band, one row above the prompt, shows the **Jeffort** button, the level change, a short bar, and this session's tokens saved or spent extra. A drop reads Jeffort's level first, a boost reads yours first with Jeffort's in bold, in the theme's colour for max (red in Signal):
+The band, one row above the prompt, shows the **Jeffort** button, the level change, a short bar, and this session's tokens saved or spent extra. A drop reads Jeffort's level first, `=` means Jeffort agreed with your setting, and a boost reads yours first with Jeffort's in bold, in the theme's colour for max (red in Signal):
 
 ```
 [ Jeffort ] medium ← high  ███████░░░  ~10.5k saved
 [ Jeffort ] medium → xhigh ██████▒▒▒▒  ~4.2k extra
+[ Jeffort ] medium = medium ████████░░  ~2.1k saved
 ```
 
 The bar shows tokens used against saved, or, with the Effort mix style, the share of turns at each level. All plugins share this band: Jeffort draws its row above whatever other plugins put there, and steps aside while Claude Code shows a feedback survey (answer or dismiss it with `0`).
@@ -94,7 +95,7 @@ If a turn shows `Jeffort: no TYPESAFE_API_KEY found`, none of those places had a
 - `/jeffort reset` clears this session's and this project's totals, live and audit; `/jeffort reset all` clears every project and the overall totals.
 - Totals are kept for this session, this project and all projects. A project is the session's project root, keyed by its full path, so two folders with the same name stay separate. A git worktree counts as its own project.
 - **Appearance** tab: Default, Signal, Mono, Colour-safe, Retro, or Match terminal.
-- Settings (`/config`): the lowest and highest level Jeffort may pick (`max` is off by default), and whether it sets effort for subagents too (on by default).
+- Settings (`/config`): the lowest and highest level Jeffort may pick (`max` is off by default), whether it sets effort for subagents too (on by default), and the highest level a subagent may get (one above the effort it inherited, by default).
 
 ## When it acts
 
@@ -127,7 +128,11 @@ Each subagent is scored once, on the task it was given, and keeps that level for
 
 Jeffort only changes a subagent that inherited the session's effort. It cannot read an agent's definition, so it treats an effort other than the session's as one the definition set, and leaves it. The gap: an agent whose definition sets the same level as your session looks inherited and gets scored. Forks and teammates carry on the parent's conversation, so they are left alone too.
 
-Turn it off with the **Subagents too** setting in `/config`.
+A subagent's task is usually a long, detailed brief, and Jev tends to read that as deep and wide work. Left alone, that sends most subagents to xhigh: one heavy multi-agent session ran 217 of 382 turns at xhigh against a medium setting. So a subagent may go at most one level above the effort it inherited. It is scored on the full scale and then capped, so its level means the same as the main loop's. Change it with **Highest effort for subagents** in `/config`: `same` uses the session's ceiling, or pick a fixed level.
+
+A background task's completion notice also starts a turn, but nobody typed it, so it is not scored and keeps the last level, like a subagent's reply.
+
+Turn subagent scoring off with the **Subagents too** setting in `/config`.
 
 ## What the savings numbers are
 

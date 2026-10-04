@@ -144,6 +144,26 @@ export function allowedLevels(floor: unknown, ceiling: unknown): Level[] {
   return LEVELS.slice(Math.min(lo, hi), Math.max(lo, hi) + 1)
 }
 
+/** The `subagentCeiling` setting's choices besides a fixed level. */
+export const SUBAGENT_CEILINGS = ['one-above', 'same', ...LEVELS] as const
+
+/**
+ * The highest level a subagent may get. A subagent's task is a long, detailed brief, which Jev
+ * tends to read as deep and wide, so by default it may go at most one level above the effort it
+ * inherited. `same` uses the session's own ceiling; a level is a fixed cap. Always within `levels`.
+ */
+export function subagentCap(setting: unknown, inherited: unknown, levels: readonly Level[]): Level {
+  const top = levels[levels.length - 1]!
+  let cap: Level = top
+  if (isLevel(setting)) cap = setting
+  else if (setting !== 'same' && isLevel(inherited)) cap = LEVELS[Math.min(LEVELS.indexOf(inherited) + 1, LEVELS.length - 1)]!
+  const i = Math.min(Math.max(LEVELS.indexOf(cap), LEVELS.indexOf(levels[0]!)), LEVELS.indexOf(top))
+  return LEVELS[i]!
+}
+
+/** `level`, lowered to `cap` when it is above it. */
+export const capLevel = (level: Level, cap: Level): Level => (LEVELS.indexOf(level) > LEVELS.indexOf(cap) ? cap : level)
+
 type JevRequest = {
   model: string
   state: unknown
@@ -211,7 +231,8 @@ export function decide(body: unknown, levels: readonly Level[]): Decision {
  */
 export const cleanPrompt = (text: string): string => {
   const cleaned = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '').trim()
-  return /<agent-message\b/.test(cleaned) ? '' : cleaned
+  // A background task's completion notice starts a turn too, but nobody typed it.
+  return /<agent-message\b/.test(cleaned) || /^<task-notification\b/.test(cleaned) ? '' : cleaned
 }
 
 /**
