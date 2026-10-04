@@ -129,7 +129,7 @@ test('shares are whole percentages that always sum to 100', () => {
   expect(sum).toBe(100)
 })
 
-import { capLevel, estimateWouldSave, initialMode, projectKey, projectName, subagentCap } from '../hooks/policy'
+import { capLevel, estimateWouldSave, grow, initialMode, projectKey, projectName, subagentCap } from '../hooks/policy'
 
 test('the enabled setting set to false wins over the stored mode, and an old toggle still counts', () => {
   expect(initialMode('on', true, false)).toBe('off')
@@ -171,4 +171,12 @@ test('the subagent cap is one above the inherited effort by default, within the 
   expect(subagentCap('max', 'high', ['low', 'medium', 'high', 'xhigh'])).toBe('xhigh')
   expect(capLevel('xhigh', 'high')).toBe('high')
   expect(capLevel('low', 'high')).toBe('low')
+})
+
+test('bar weights stay on a 0-1000 scale whatever the token counts', () => {
+  expect(grow(4_478_700, 10_014_600)).toBe(447)
+  expect(grow(1, 10_000_000)).toBe(1)
+  expect(grow(0, 100)).toBe(0)
+  expect(grow(5, 0)).toBe(0)
+  expect(grow(200, 100)).toBe(1000)
 })

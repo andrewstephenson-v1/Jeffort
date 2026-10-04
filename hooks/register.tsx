@@ -29,6 +29,7 @@ import {
   decide,
   estimateSaved,
   estimateWouldSave,
+  grow,
   initialMode,
   isBarStyle,
   isCacheSafeModel,
@@ -257,21 +258,23 @@ type Primitives = { Box: any; Text: any }
 /** The stacked bar: what you used, what you saved, and any overspend, sized by token count. */
 function bar({ Box }: Primitives, p: Palette, s: Stats) {
   const { used, saved, over } = barModel(s.outputTokens, s.tokensSaved)
+  const total = used + saved + over
   return (
     <Box width="100%" height={1}>
-      {used > 0 ? <Box flexGrow={used} minWidth={1} backgroundColor={p.used} /> : null}
-      {over > 0 ? <Box flexGrow={over} minWidth={1} backgroundColor={p.over} /> : null}
-      {saved > 0 ? <Box flexGrow={saved} minWidth={1} backgroundColor={p.saved} /> : null}
+      {used > 0 ? <Box flexGrow={grow(used, total)} minWidth={1} backgroundColor={p.used} /> : null}
+      {over > 0 ? <Box flexGrow={grow(over, total)} minWidth={1} backgroundColor={p.over} /> : null}
+      {saved > 0 ? <Box flexGrow={grow(saved, total)} minWidth={1} backgroundColor={p.saved} /> : null}
     </Box>
   )
 }
 
 /** The effort-mix bar: one segment per level, sized by how many turns ran at it. */
 function mixBar({ Box }: Primitives, p: Palette, c: Record<string, number>) {
+  const total = LEVELS.reduce((sum, l) => sum + (c[l] ?? 0), 0)
   return (
     <Box width="100%" height={1}>
       {LEVELS.filter((l) => (c[l] ?? 0) > 0).map((l) => (
-        <Box key={`seg-${l}`} flexGrow={c[l]} minWidth={1} backgroundColor={p[l]} />
+        <Box key={`seg-${l}`} flexGrow={grow(c[l] ?? 0, total)} minWidth={1} backgroundColor={p[l]} />
       ))}
     </Box>
   )
@@ -841,8 +844,8 @@ export const register: Register = (on, options) => {
                 <Text color={p[lv]}>{lv}</Text>
               </Box>
               <Box width={24} height={1}>
-                {levels[lv] > 0 ? <Box flexGrow={levels[lv]} minWidth={1} backgroundColor={p[lv]} /> : null}
-                {levels[lv] < peak ? <Box flexGrow={peak - levels[lv]} /> : null}
+                {levels[lv] > 0 ? <Box flexGrow={grow(levels[lv], peak)} minWidth={1} backgroundColor={p[lv]} /> : null}
+                {levels[lv] < peak ? <Box flexGrow={grow(peak - levels[lv], peak)} /> : null}
               </Box>
               <Text dimColor> {levels[lv]}</Text>
             </Box>
