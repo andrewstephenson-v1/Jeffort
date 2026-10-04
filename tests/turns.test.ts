@@ -20,7 +20,7 @@ const usage = (output: number, written: number): Usage => ({
  */
 function world(on: On, scoreOf: (prompt: string) => number) {
   const store = new Map<string, unknown>()
-  const w = { store, root: '/Users/a/Dev/alpha', asked: [] as string[], effort: new Map<string, unknown>(), firstWrite: 500, firstParty: true, agents: [] as Array<{ id: string; type: string; task: string }> }
+  const w = { store, statuses: [] as Array<string | undefined>, root: '/Users/a/Dev/alpha', asked: [] as string[], effort: new Map<string, unknown>(), firstWrite: 500, firstParty: true, agents: [] as Array<{ id: string; type: string; task: string }> }
   on('store.get', async (_$, e) => ({ value: store.get(e.key) }))
   on('store.set', async (_$, e) => {
     store.set(e.key, e.value)
@@ -34,7 +34,10 @@ function world(on: On, scoreOf: (prompt: string) => number) {
   on('session.start', async (_$, e) => ({ cwd: e.cwd }))
   on('turn.start', async (_$, e) => ({ turnId: e.turnId }))
   on('command.register', async () => ({ value: undefined }))
-  on('ui.status', async () => ({ value: undefined }))
+  on('ui.status', async (_$, e) => {
+    w.statuses.push(e.text)
+    return { value: undefined }
+  })
   on('session.version', async () => ({ value: { version: '2.1.290', base: '2.1.290' } }))
   on('session.authorize', async () => ({ value: w.firstParty ? { handle: 'h', kind: 'api-key' as const } : null }))
   on('session.root', async () => ({ value: w.root }))
@@ -219,40 +222,55 @@ test('the subagents setting off leaves every subagent alone', { options: { subag
   expect(w.effort.get('a1/s1')).toBe('high')
 })
 
-test('the band drops its legend, then its bar, as its room shrinks, keeping the net figure in view', async ($, on) => {
-  const w = world(on, () => 0)
-  await start($, w)
-  await turn($, 't1', 'easy')
-  const band = (maxRows: number) =>
-    $.ui.mount({ plugin: 'jeffort', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, maxRows } })
-  const legend = { type: 'Text', text: /this session, est\./ } as const
-  const brief = { type: 'Text', text: /saved · net ~\$/ } as const
-  const bars = async (ui: any) => JSON.stringify(await ui.drawn()).includes('backgroundColor')
-
-  const roomy = await band(3)
-  expect(await roomy.find(legend)).toBeDefined()
-  expect(await roomy.find(brief)).toBeUndefined()
-  expect(await bars(roomy)).toBe(true)
-  await roomy.unmount()
-
-  const two = await band(2)
-  expect(await two.find(legend)).toBeUndefined()
-  expect(await two.find(brief)).toBeDefined()
-  expect(await bars(two)).toBe(true)
-  await two.unmount()
-
-  const one = await band(1)
-  expect(await one.find(legend)).toBeUndefined()
-  expect(await one.find(brief)).toBeDefined()
-  expect(await bars(one)).toBe(false)
-  expect(await one.find({ key: 'toggle' })).toBeDefined()
-  await one.unmount()
-})
-
 const auditOverall = (w: { store: Map<string, unknown> }) =>
   ((w.store.get('jeffort') as { auditStats?: Record<string, number> } | undefined)?.auditStats ?? {}) as Record<string, number>
 const auditProject = (w: { store: Map<string, unknown> }, root: string) =>
   (w.store.get(`project:${root}`) as { auditStats?: Record<string, number> } | undefined)?.auditStats
+/** The words a drawn tree shows, its text nodes joined in order. */
+const textOf = (node: unknown): string =>
+  typeof node === 'string' ? node : Array.isArray((node as any)?.children) ? (node as any).children.map(textOf).join('') : ''
+
+test('the status line carries warnings only, and a scored turn clears one', async ($, on) => {
+  const w = world(on, (p) => (p === 'flaky' ? Number.NaN : 0))
+  await start($, w)
+  await turn($, 'w1', 'flaky')
+  expect(w.statuses.at(-1)).toMatch(/kept high/)
+  await turn($, 'w2', 'easy')
+  expect(w.statuses.at(-1)).toBeUndefined()
+  await turn($, 'w3', 'easy')
+  expect(w.statuses.length).toBe(2)
+})
+
+test('a drop reads pick ← yours, a boost yours → pick, and the band counts tokens, never dollars', async ($, on) => {
+  const w = world(on, (p) => (p === 'hard' ? 3 : 0))
+  await start($, w)
+  const band = (bodyColumns = 120) =>
+    $.ui.mount({ plugin: 'jeffort', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, maxRows: 3, bodyColumns } })
+
+  await turn($, 'e1', 'easy')
+  let ui = await band()
+  let drawn = JSON.stringify(await ui.drawn())
+  expect(textOf(await ui.drawn())).toContain('low ← high')
+  expect(drawn).not.toContain('→')
+  expect(await ui.find({ type: 'Text', text: /saved/ })).toBeDefined()
+  expect(drawn).not.toContain('$')
+  expect(drawn).toContain('backgroundColor')
+  await ui.unmount()
+
+  await turn($, 'e2', 'hard')
+  await turn($, 'e3', 'hard')
+  ui = await band()
+  drawn = JSON.stringify(await ui.drawn())
+  expect(textOf(await ui.drawn())).toContain('high → xhigh')
+  expect(drawn).toContain('"bold":true')
+  expect(await ui.find({ type: 'Text', text: /extra/ })).toBeDefined()
+  await ui.unmount()
+
+  // Too narrow for the bar: the figure alone carries it.
+  ui = await band(50)
+  expect(JSON.stringify(await ui.drawn())).not.toContain('backgroundColor')
+  await ui.unmount()
+})
 
 test('audit mode scores every turn but never changes effort, and keeps its own totals', async ($, on) => {
   const w = world(on, (p) => (p === 'hard' ? 3 : 0))
@@ -305,16 +323,16 @@ test('switching from audit to on counts each turn in its own mode, and reset cle
   expect(auditProject(w, w.root)?.applied ?? 0).toBe(0)
 })
 
-test('the band says what audit mode would pick, and its toggle turns Jeffort off', async ($, on) => {
+test('the band and status line say what audit mode would pick', async ($, on) => {
   const w = world(on, () => 3)
   await start($, w)
   await $.command.run({ command: 'jeffort', args: 'audit' })
   await turn($, 'd1', 'hard')
-  const ui = await $.ui.mount({ plugin: 'jeffort', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, maxRows: 3 } })
-  expect(await ui.find({ type: 'Text', text: /audit · would pick/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /xhigh \(running high\)/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /would have spent/ })).toBeDefined()
-  await ui.press({ key: 'toggle' })
-  expect((await ui.find({ key: 'toggle' }))?.text).toBe('Turn on')
+  const ui = await $.ui.mount({ plugin: 'jeffort', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, maxRows: 3, bodyColumns: 120 } })
+  const drawn = JSON.stringify(await ui.drawn())
+  expect(textOf(await ui.drawn())).toContain('audit ·')
+  expect(textOf(await ui.drawn())).toContain('high → would pick xhigh')
+  expect(await ui.find({ type: 'Text', text: /extra/ })).toBeDefined()
   await ui.unmount()
 })
+

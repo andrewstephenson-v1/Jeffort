@@ -42,7 +42,6 @@ import {
   parseEnv,
   projectKey,
   projectName,
-  shares,
 } from './policy'
 import type { Dims, Level, Mode, Palette } from './policy'
 
@@ -216,6 +215,13 @@ async function openPane($: Engine) {
   await $.ui.open({ id: PANE, title: 'Jeffort' })
 }
 
+/** The band's button: opens the pane, or closes it when it is already the one showing. */
+async function togglePane($: Engine) {
+  const shown = (await $.ui.panes()).some((pane) => pane.id === PANE && pane.isShown)
+  if (shown) await $.ui.close({ id: PANE })
+  else await openPane($)
+}
+
 function addTurn(s: Stats, turn: Stats): Stats {
   return {
     changed: s.changed + turn.changed,
@@ -267,20 +273,6 @@ function mixBar({ Box }: Primitives, p: Palette, c: Record<string, number>) {
   )
 }
 
-/** Percentages in the level colours, e.g. low 45% medium 27% high 27%. */
-function mixLegend({ Box, Text }: Primitives, p: Palette, c: Record<string, number>) {
-  const pct = shares(mix(LEVELS.flatMap((l) => Array<Level>(c[l] ?? 0).fill(l))))
-  return (
-    <Box gap={2}>
-      {LEVELS.filter((l) => pct[l] > 0).map((l) => (
-        <Text key={`pct-${l}`} color={p[l]}>
-          {l} {pct[l]}%
-        </Text>
-      ))}
-    </Box>
-  )
-}
-
 function barLegend(s: Stats): string {
   const { used, saved, over } = barModel(s.outputTokens, s.tokensSaved)
   return (
@@ -303,6 +295,19 @@ function auditLegend(s: Stats): string {
   return `ran ${compact(s.outputTokens)} · Jeffort ${would} output tokens · net ${approx(money(s.usdSaved))}`
 }
 
+/** Whether the status line holds a per-turn warning that the next scored turn should clear. */
+let warned = false
+
+/** How far apart two levels are: positive when `pick` is the higher. */
+const rank = (pick: string, baseline: string): number =>
+  isLevel(pick) && isLevel(baseline) ? LEVELS.indexOf(pick) - LEVELS.indexOf(baseline) : 0
+
+/** Output tokens saved or extra, the figure the band and the status line show. Tokens, never dollars. */
+function tokenFigure(s: Stats, isAudit: boolean): { saved: number; over: number; used: number } {
+  const { used, saved, over } = barModel(isAudit ? s.outputTokens - s.tokensSaved : s.outputTokens, s.tokensSaved)
+  return { used, saved, over }
+}
+
 /**
  * Scores a prompt and returns what to apply; `level` stays null (the effort in force stands) when
  * there is no prompt, no key, or Jev declines. `label` prefixes a subagent's excerpt, and only the
@@ -319,8 +324,13 @@ async function pickFor(
   const baseline = isLevel(e.effort) ? e.effort : null
   const excerpt = `${label}${(prompt ?? '').replace(/\s+/g, ' ')}`.slice(0, 80)
   const pick: Pick = { mode: m, level: null, baseline, model: e.model, excerpt }
-  const verb = m === 'audit' ? 'Jeffort audit: would pick' : 'Jeffort:'
-  const status = (text: string) => (e.agentId ? undefined : $.ui.status(text))
+  // The status line carries warnings only; the band shows the rest. A turn that scores clears the
+  // warning an earlier turn left, and only the main loop writes it, so subagents never flicker it.
+  const status = (text: string | undefined) => {
+    if (e.agentId) return
+    warned = text !== undefined
+    return $.ui.status(text)
+  }
   try {
     const auth = prompt ? await credentials($) : undefined
     if (prompt && !auth) {
@@ -332,7 +342,7 @@ async function pickFor(
         pick.score = decision.score
         pick.dims = decision.dims
         pick.confidences = decision.confidences
-        status(`${verb} ${decision.level} (${decision.score.toFixed(2)}, p=${decision.confidence.toFixed(2)})`)
+        if (warned) await status(undefined)
       } else {
         status(`${m === 'audit' ? 'Jeffort audit: no pick,' : 'Jeffort:'} kept ${String(e.effort)} (${decision?.reason ?? 'jev unavailable'})`)
       }
@@ -623,9 +633,11 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
+    // One band, shared by every plugin: draw what the plugins beneath drew, with Jeffort's single
+    // row on top, so Jeffort never hides anyone else's.
+    const below = await next(e).catch(() => null)
     const { Box, Button, Text } = $.ui.resolve(e)
     const m = await read($, mode)
-    const isOn = m !== 'off'
     const isAudit = m === 'audit'
     // Audit mode draws its own totals; neither mode's figures ever show under the other.
     const s = isAudit ? await read($, auditStats) : await read($, stats)
@@ -634,62 +646,58 @@ export const register: Register = (on, options) => {
     const p = paletteOf(await read($, theme))
     const style = await read($, barStyle)
     const c = isAudit ? await read($, auditCounts) : await read($, counts)
-    const hasBar = isOn && s.applied > 0 && s.outputTokens + Math.abs(s.tokensSaved) > 0
-    // A band taller than its room scrolls, leaving only the first row in view: an open pane or
-    // the task list can squeeze it to one or two rows. Drop rows from the bottom instead, and
-    // carry the net figure on the first row once the legend no longer fits.
-    const room = e.props.maxRows ?? Infinity
-    const showBar = hasBar && room >= 2
-    const showLegend = hasBar && room >= 3
-    const brief = !hasBar || showLegend
-      ? null
-      : style === 'mix'
-        ? `· net ${approx(money(net(s)))}`
-        : isAudit
-          ? `· would ${s.tokensSaved >= 0 ? 'save' : 'spend'} ${approx(compact(Math.abs(s.tokensSaved)))} · net ${approx(money(net(s)))}`
-          : `· ${approx(compact(s.tokensSaved))} saved · net ${approx(money(net(s)))}`
+    const { saved, over } = tokenFigure(s, isAudit)
+    const hasFigure = m !== 'off' && s.applied > 0 && saved + over > 0
+    // The bar needs room beside the words; on a narrow band the figure alone carries it.
+    const showBar = hasFigure && (e.props.bodyColumns ?? Infinity) >= 60
+    const step = l ? rank(l.level, l.baseline) : 0
+    const would = isAudit ? 'would pick ' : ''
 
-    return (
-      <Box flexDirection="column">
-        <Box>
-          <Button key="open" label="Jeffort" onPress={() => openPane($)} />
-          <Text dimColor> {isAudit ? 'audit · would pick ' : isOn ? 'on · ' : 'off '}</Text>
-          {isOn && l ? (
-            <Text color={levelColor(p, l.level)}>
-              {l.level}
-              {isAudit ? ` (running ${l.baseline})` : l.baseline !== l.level ? ` (was ${l.baseline})` : ''}{' '}
-            </Text>
-          ) : isOn ? (
-            <Text dimColor>{isAudit ? 'after the next turn ' : 'waiting for a turn '}</Text>
-          ) : null}
-          <Button key="toggle" label={isOn ? 'Turn off' : 'Turn on'} onPress={() => setMode($, isOn ? 'off' : 'on')} />
-          {brief ? (
-            <Text dimColor wrap="truncate-end">
-              {' '}
-              {brief}
-            </Text>
-          ) : null}
-        </Box>
-        {showBar && style === 'mix' ? (
-          <Box flexDirection="column">
-            {mixBar({ Box, Text }, p, c)}
-            {showLegend ? (
-              <Box gap={2}>
-                {mixLegend({ Box, Text }, p, c)}
-                <Text dimColor wrap="truncate-end">of turns · net {approx(money(net(s)))}</Text>
-              </Box>
-            ) : null}
-          </Box>
-        ) : showBar ? (
-          <Box flexDirection="column">
-            {bar({ Box, Text }, p, isAudit ? auditBarStats(s) : s)}
-            {showLegend ? (
-              <Text dimColor wrap="truncate-end">
-                this session, est.: {isAudit ? auditLegend(s) : barLegend(s)}
-              </Text>
-            ) : null}
+    // The level change, the same way round as the status line: a boost reads `yours → Jeffort's`
+    // with Jeffort's level in red, a drop `Jeffort's ← yours`.
+    const change = !l ? (
+      <Text dimColor>{m === 'off' ? 'off' : isAudit ? 'audit · waiting for a turn' : 'waiting for a turn'}</Text>
+    ) : step > 0 ? (
+      <Text>
+        <Text dimColor>
+          {isAudit ? 'audit · ' : ''}
+          {l.baseline} → {would}
+        </Text>
+        <Text color={p.max} bold>
+          {l.level}
+        </Text>
+      </Text>
+    ) : (
+      <Text>
+        <Text dimColor>
+          {isAudit ? 'audit · ' : ''}
+          {step < 0 ? would : isAudit ? 'would keep ' : ''}
+        </Text>
+        <Text color={levelColor(p, l.level)}>{l.level}</Text>
+        {step < 0 ? <Text dimColor> ← {l.baseline}</Text> : null}
+      </Text>
+    )
+
+    const row = (
+      <Box key="jeffort-row" gap={1}>
+        <Button key="open" label="Jeffort" onPress={() => togglePane($)} />
+        {change}
+        {showBar ? (
+          <Box width={16} height={1}>
+            {style === 'mix' ? mixBar({ Box, Text }, p, c) : bar({ Box, Text }, p, isAudit ? auditBarStats(s) : s)}
           </Box>
         ) : null}
+        {hasFigure ? (
+          <Text dimColor wrap="truncate-end">
+            ~{compact(saved > 0 ? saved : over)} {saved > 0 ? 'saved' : 'extra'}
+          </Text>
+        ) : null}
+      </Box>
+    )
+    return (
+      <Box flexDirection="column">
+        {row}
+        {below}
       </Box>
     )
   })

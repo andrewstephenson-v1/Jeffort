@@ -61,16 +61,23 @@ test('pane has both tabs and every theme on every surface', async ($, on) => {
   }
 })
 
-test('band has a Jeffort button that opens the pane', async ($, on) => {
+test('the band\'s Jeffort button opens the pane, and closes it when pressed again', async ($, on) => {
   memoryStore(on)
-  let opened = false
+  let isShown = false
+  on('ui.panes', async () => ({ value: isShown ? [{ id: 'jeffort', title: 'Jeffort', isShown: true }] : [] }) as any)
   on('ui.open', async () => {
-    opened = true
+    isShown = true
     return { value: { isPlaced: true } }
+  })
+  on('ui.close', async () => {
+    isShown = false
+    return { value: undefined }
   })
   const ui = await $.ui.mount({ plugin: 'jeffort', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false } })
   expect((await ui.find({ key: 'open' }))?.text).toBe('Jeffort')
   await ui.press({ key: 'open' })
-  expect(opened).toBe(true)
+  expect(isShown).toBe(true)
+  await ui.press({ key: 'open' })
+  expect(isShown).toBe(false)
   await ui.unmount()
 })

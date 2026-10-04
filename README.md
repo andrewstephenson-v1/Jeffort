@@ -19,23 +19,24 @@ I hope and expect Anthropic to ship auto-effort at some point, and I also hope a
 
 ## What you see
 
-A band above the prompt shows the level it picked, an on/off button, and a bar of the estimated output tokens saved this session:
+The band, one row above the prompt, shows the **Jeffort** button, the level change, a short bar, and this session's tokens saved or spent extra. A drop reads Jeffort's level first, a boost reads yours first with Jeffort's in bold, in the theme's colour for max (red in Signal):
 
-![The Jeffort band: on, medium (was high), a grey bar of output tokens used with a green segment for tokens saved, and the session's estimated net saving](docs/images/band-savings.png)
+```
+[ Jeffort ] medium ← high  ███████░░░  ~10.5k saved
+[ Jeffort ] medium → xhigh ██████▒▒▒▒  ~4.2k extra
+```
 
-Or, if you pick the Effort mix style, the share of turns at each level:
+The bar shows tokens used against saved, or, with the Effort mix style, the share of turns at each level. All plugins share this band: Jeffort draws its row above whatever other plugins put there, and steps aside while Claude Code shows a feedback survey (answer or dismiss it with `0`).
 
-![The Jeffort band in Effort mix style: a bar split half medium, half high, with the percentages underneath](docs/images/band-mix.png)
+Outside the pane everything is in output tokens; dollar estimates and the detail live in the pane. Jeffort's status line under the prompt is used only for warnings, such as a missing key, and clears once a turn scores.
 
 ### Audit only
 
-Not ready to let Jeffort change anything? `/jeffort audit`, or **Audit only** in the pane, scores every turn and records what Jeffort would have picked, while your own effort runs untouched. The band then reads `audit · would pick xhigh (running medium)`, and its bar shows what you ran against what Jeffort's picks would have saved or spent. Audit totals are kept apart from the live ones, for the session, the project and all projects, so you can compare before switching on.
+Not ready to let Jeffort change anything? `/jeffort audit`, or **Audit only** in the pane, scores every turn and records what Jeffort would have picked, while your own effort runs untouched. The band then reads `audit · medium → would pick xhigh`, and its bar shows what you ran against what Jeffort's picks would have saved or spent. Audit totals are kept apart from the live ones, for the session, the project and all projects, so you can compare before switching on.
 
 It is also a cheap way to see how your effort is spread: the Effort mix style shows where Jeffort would have put each turn.
 
-The band steps aside while Claude Code shows a feedback survey in the same spot. Answer or dismiss it (`0`) and the band returns. When space below the transcript is tight, the band drops its legend and then its bar, keeping the net figure on its first line.
-
-Click **Jeffort** for a pane with this session's, this project's and all projects' totals, and where this session's turns landed. It also lists the last few turns with the level Jeffort picked over your own:
+Click **Jeffort** for the pane: the On, Audit only and Off controls, this session's, this project's and all projects' totals with dollar estimates, and where this session's turns landed. It also lists the last few turns with the level Jeffort picked over your own:
 
 ![The Jeffort pane's Stats tab: session and project totals, and a bar per effort level](docs/images/pane-stats.png)
 
@@ -46,8 +47,6 @@ The **Appearance** tab picks a theme and the band's bar style:
 ### In the Claude desktop app
 
 The same band and pane work in the Code tab, where the pane docks beside the transcript:
-
-![The Jeffort band in the desktop app: medium (was high), a bar split low 14%, medium 79%, high 7%, net ~$0.21](docs/images/desktop-band.png)
 
 ![The Jeffort pane's Stats tab in the desktop app: session and project totals, and a bar per effort level](docs/images/desktop-pane-stats.png)
 
@@ -91,7 +90,7 @@ If a turn shows `Jeffort: no TYPESAFE_API_KEY found`, none of those places had a
 
 ## Usage
 
-- `/jeffort` toggles it on and off. `/jeffort on`, `audit`, `off` and `pane` also work, and the pane has the same three modes.
+- `/jeffort` toggles it on and off. `/jeffort on`, `audit`, `off` and `pane` also work. The band has no on/off button: click **Jeffort** and use the pane's On, Audit only and Off.
 - `/jeffort reset` clears this session's and this project's totals, live and audit; `/jeffort reset all` clears every project and the overall totals.
 - Totals are kept for this session, this project and all projects. A project is the session's project root, keyed by its full path, so two folders with the same name stay separate. A git worktree counts as its own project.
 - **Appearance** tab: Default, Signal, Mono, Colour-safe, Retro, or Match terminal.
