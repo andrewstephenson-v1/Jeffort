@@ -216,6 +216,13 @@ async function openPane($: Engine) {
   await $.ui.open({ id: PANE, title: 'Jeffort' })
 }
 
+/** The band's button: opens the pane, or closes it when it is already the one showing. */
+async function togglePane($: Engine) {
+  const shown = (await $.ui.panes()).some((pane) => pane.id === PANE && pane.isShown)
+  if (shown) await $.ui.close({ id: PANE })
+  else await openPane($)
+}
+
 function addTurn(s: Stats, turn: Stats): Stats {
   return {
     changed: s.changed + turn.changed,
@@ -704,7 +711,7 @@ export const register: Register = (on, options) => {
 
     const row = (
       <Box key="jeffort-row" gap={1}>
-        <Button key="open" label="Jeffort" onPress={() => openPane($)} />
+        <Button key="open" label="Jeffort" onPress={() => togglePane($)} />
         {change}
         {showBar ? (
           <Box width={16} height={1}>
