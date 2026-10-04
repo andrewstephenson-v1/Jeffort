@@ -19,7 +19,21 @@ I hope and expect Anthropic to ship auto-effort at some point, and I also hope a
 
 ## What you see
 
-A band above the prompt shows the level it picked, an on/off button, and a bar of the estimated output tokens saved this session (or the mix of levels, if you pick that style). Click **Jeffort** for a pane with stats and a theme picker.
+A band above the prompt shows the level it picked, an on/off button, and a bar of the estimated output tokens saved this session:
+
+![The Jeffort band: on, medium (was high), a grey bar of output tokens used with a green segment for tokens saved, and the session's estimated net saving](docs/images/band-savings.png)
+
+Or, if you pick the Effort mix style, the share of turns at each level:
+
+![The Jeffort band in Effort mix style: a bar split half medium, half high, with the percentages underneath](docs/images/band-mix.png)
+
+Click **Jeffort** for a pane with this session's, this project's and all projects' totals, where this session's turns landed, and the last few turns with the level Jeffort picked over your own:
+
+![The Jeffort pane's Stats tab: totals, a bar per effort level, and recent turns such as "medium ← high, 59 out"](docs/images/pane-stats.png)
+
+The **Appearance** tab picks a theme and the band's bar style:
+
+![The Jeffort pane's Appearance tab: themes Default, Signal, Mono, Colour-safe and Retro, each with a row of colour swatches](docs/images/pane-appearance.png)
 
 ## Install
 

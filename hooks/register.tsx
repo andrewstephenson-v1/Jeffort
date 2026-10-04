@@ -147,6 +147,8 @@ const compact = (n: number): string => {
 
 const net = (s: Stats): number => s.usdSaved - s.rebuildUsd
 const money = (n: number): string => `${n < 0 ? '-' : ''}$${Math.abs(n).toFixed(2)}`
+/** Marks a figure as an estimate: ~$0.01, and -~$1.09 rather than ~-$1.09. */
+const approx = (figure: string): string => (figure.startsWith('-') ? `-~${figure.slice(1)}` : `~${figure}`)
 
 async function persist($: Engine) {
   await $.store.set(STORE_KEY, {
@@ -266,7 +268,7 @@ function barLegend(s: Stats): string {
   return (
     `used ${compact(used)}` +
     `${over > 0 ? ` · extra ${compact(over)}` : ''}` +
-    `${saved > 0 ? ` · saved ${compact(saved)}` : ''} output tokens · net ~${money(net(s))} after ` +
+    `${saved > 0 ? ` · saved ${compact(saved)}` : ''} output tokens · net ${approx(money(net(s)))} after ` +
     `${compact(s.rebuiltTokens)} cache rebuilt`
   )
 }
@@ -435,9 +437,9 @@ export const register: Register = (on, options) => {
     const isOn = await read($, enabled)
     const proj = await read($, project)
     const line = (label: string, s: Stats) =>
-      `${label}: ${s.changed} of ${s.applied} turns changed effort; ~${compact(s.tokensSaved)} output tokens saved ` +
-      `(~${money(s.usdSaved)}) minus ${compact(s.rebuiltTokens)} cache tokens rebuilt ` +
-      `(~${money(s.rebuildUsd)}) = ~${money(net(s))} net.`
+      `${label}: ${s.changed} of ${s.applied} turns changed effort; ${approx(compact(s.tokensSaved))} output tokens saved ` +
+      `(${approx(money(s.usdSaved))}) minus ${compact(s.rebuiltTokens)} cache tokens rebuilt ` +
+      `(${approx(money(s.rebuildUsd))}) = ${approx(money(net(s)))} net.`
     return {
       text:
         `Jeffort is ${isOn ? 'on' : 'off'}.\n${line('This session', await read($, stats))}\n` +
@@ -560,7 +562,7 @@ export const register: Register = (on, options) => {
             {mixBar({ Box, Text }, p, c)}
             <Box gap={2}>
               {mixLegend({ Box, Text }, p, c)}
-              <Text dimColor>of turns · net ~{money(net(s))}</Text>
+              <Text dimColor>of turns · net {approx(money(net(s)))}</Text>
             </Box>
           </Box>
         ) : hasBar ? (
@@ -669,12 +671,12 @@ export const register: Register = (on, options) => {
           <Text dimColor>{scored ? `This session, est.: ${barLegend(s)}` : 'No turns scored yet this session.'}</Text>
           {proj ? (
             <Text dimColor>
-              This project ({proj.name}): {proj.stats.changed} of {proj.stats.applied} turns changed · ~
-              {compact(proj.stats.tokensSaved)} tokens saved · net ~{money(net(proj.stats))}
+              This project ({proj.name}): {proj.stats.changed} of {proj.stats.applied} turns changed ·{' '}
+              {approx(compact(proj.stats.tokensSaved))} tokens saved · net {approx(money(net(proj.stats)))}
             </Text>
           ) : null}
           <Text dimColor>
-            All projects: {all.changed} of {all.applied} turns changed · ~{compact(all.tokensSaved)} tokens saved · net ~{money(net(all))}
+            All projects: {all.changed} of {all.applied} turns changed · {approx(compact(all.tokensSaved))} tokens saved · net {approx(money(net(all)))}
           </Text>
         </Box>
         <Box flexDirection="column">
