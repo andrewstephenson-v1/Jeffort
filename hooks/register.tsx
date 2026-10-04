@@ -680,17 +680,23 @@ export const register: Register = (on, options) => {
     // The level change, the same way round as the status line: a boost reads `yours → Jeffort's`
     // with Jeffort's level in red, a drop `Jeffort's ← yours`.
     const change = !l ? (
-      <Text dimColor>{m === 'off' ? ' off' : isAudit ? ' audit · waiting for a turn' : ' waiting for a turn'}</Text>
+      <Text dimColor>{m === 'off' ? 'off' : isAudit ? 'audit · waiting for a turn' : 'waiting for a turn'}</Text>
     ) : step > 0 ? (
       <Text>
-        <Text dimColor>{isAudit ? ' audit ·' : ''} {l.baseline} → {would}</Text>
+        <Text dimColor>
+          {isAudit ? 'audit · ' : ''}
+          {l.baseline} → {would}
+        </Text>
         <Text color={p.max} bold>
           {l.level}
         </Text>
       </Text>
     ) : (
       <Text>
-        <Text dimColor>{isAudit ? ' audit ·' : ''} {step < 0 ? would : isAudit ? 'would keep ' : ''}</Text>
+        <Text dimColor>
+          {isAudit ? 'audit · ' : ''}
+          {step < 0 ? would : isAudit ? 'would keep ' : ''}
+        </Text>
         <Text color={levelColor(p, l.level)}>{l.level}</Text>
         {step < 0 ? <Text dimColor> ← {l.baseline}</Text> : null}
       </Text>
