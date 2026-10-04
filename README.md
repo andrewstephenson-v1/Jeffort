@@ -19,9 +19,7 @@ I hope and expect Anthropic to ship auto-effort at some point, and I also hope a
 
 ## What you see
 
-Jeffort keeps to three small places, all in output tokens. Dollar figures and the detail live in the pane.
-
-**The band**, one row above the prompt: the **Jeffort** button, the level change, a short bar, and this session's tokens saved or spent extra. A drop reads Jeffort's level first, a boost reads yours first with Jeffort's in red:
+The band, one row above the prompt, shows the **Jeffort** button, the level change, a short bar, and this session's tokens saved or spent extra. A drop reads Jeffort's level first, a boost reads yours first with Jeffort's in bold, in the theme's colour for max (red in Signal):
 
 ```
 [ Jeffort ] medium ← high  ███████░░░  ~10.5k saved
@@ -30,9 +28,7 @@ Jeffort keeps to three small places, all in output tokens. Dollar figures and th
 
 The bar shows tokens used against saved, or, with the Effort mix style, the share of turns at each level. All plugins share this band: Jeffort draws its row above whatever other plugins put there, and steps aside while Claude Code shows a feedback survey (answer or dismiss it with `0`).
 
-**The status line** under the prompt says the same in words, with a ten-cell gauge: `medium ← high · ▰▰▱▱▱▱▱▱▱▱ ~10.5k of 43.3k output tokens saved`. It shares its space with nothing, so it stays when a survey, a collapsed band or another plugin hides the band.
-
-**The footer** shows `jeffort` among Claude Code's own mode labels while Jeffort is on, and `jeffort audit` while it is only auditing.
+Outside the pane everything is in output tokens; dollar estimates and the detail live in the pane. Jeffort's status line under the prompt is used only for warnings, such as a missing key, and clears once a turn scores.
 
 ### Audit only
 

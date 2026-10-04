@@ -199,7 +199,6 @@ async function persistProject($: Engine) {
 async function setMode($: Engine, value: Mode) {
   await update($, mode, () => value)
   await persist($)
-  await refreshStatus($)
 }
 
 async function setTheme($: Engine, id: string) {
@@ -296,52 +295,17 @@ function auditLegend(s: Stats): string {
   return `ran ${compact(s.outputTokens)} · Jeffort ${would} output tokens · net ${approx(money(s.usdSaved))}`
 }
 
+/** Whether the status line holds a per-turn warning that the next scored turn should clear. */
+let warned = false
+
 /** How far apart two levels are: positive when `pick` is the higher. */
 const rank = (pick: string, baseline: string): number =>
   isLevel(pick) && isLevel(baseline) ? LEVELS.indexOf(pick) - LEVELS.indexOf(baseline) : 0
-
-/**
- * The level change in words, the same way round as the band: a boost reads `yours → Jeffort's`,
- * a drop `Jeffort's ← yours`.
- */
-function changeText(l: NonNullable<Last>): string {
-  const would = l.mode === 'audit'
-  const step = rank(l.level, l.baseline)
-  if (step > 0) return `${l.baseline} → ${would ? 'would pick ' : ''}${l.level}`
-  if (step < 0) return `${would ? 'would pick ' : ''}${l.level} ← ${l.baseline}`
-  return `${would ? 'would keep ' : ''}${l.level}`
-}
 
 /** Output tokens saved or extra, the figure the band and the status line show. Tokens, never dollars. */
 function tokenFigure(s: Stats, isAudit: boolean): { saved: number; over: number; used: number } {
   const { used, saved, over } = barModel(isAudit ? s.outputTokens - s.tokensSaved : s.outputTokens, s.tokensSaved)
   return { used, saved, over }
-}
-
-/** Ten cells for the status line, filled in proportion to what was saved, or spent extra. */
-function gauge(part: number, whole: number): string {
-  const filled = whole > 0 ? Math.min(10, Math.max(0, Math.round((10 * part) / whole))) : 0
-  return '▰'.repeat(filled) + '▱'.repeat(10 - filled)
-}
-
-/**
- * Jeffort's status line under the prompt: the latest level change and this session's token figure.
- * It shares space with nothing, so it stays when a survey, a collapsed band or another plugin
- * hides the band. Cleared while Jeffort is off.
- */
-async function refreshStatus($: Engine) {
-  const m = await read($, mode)
-  if (m === 'off') return $.ui.status(undefined)
-  const isAudit = m === 'audit'
-  const s = isAudit ? await read($, auditStats) : await read($, stats)
-  const shown = await read($, last)
-  const parts: string[] = []
-  if (shown?.mode === m) parts.push(`${isAudit ? 'audit: ' : ''}${changeText(shown)}`)
-  else if (isAudit) parts.push('audit')
-  const { used, saved, over } = tokenFigure(s, isAudit)
-  if (s.applied > 0 && saved > 0) parts.push(`${gauge(saved, used + saved)} ~${compact(saved)} of ${compact(used + saved)} output tokens saved`)
-  else if (s.applied > 0 && over > 0) parts.push(`${gauge(over, used + over)} ~${compact(over)} extra output tokens`)
-  if (parts.length) await $.ui.status(parts.join(' · '))
 }
 
 /**
@@ -360,7 +324,13 @@ async function pickFor(
   const baseline = isLevel(e.effort) ? e.effort : null
   const excerpt = `${label}${(prompt ?? '').replace(/\s+/g, ' ')}`.slice(0, 80)
   const pick: Pick = { mode: m, level: null, baseline, model: e.model, excerpt }
-  const status = (text: string) => (e.agentId ? undefined : $.ui.status(text))
+  // The status line carries warnings only; the band shows the rest. A turn that scores clears the
+  // warning an earlier turn left, and only the main loop writes it, so subagents never flicker it.
+  const status = (text: string | undefined) => {
+    if (e.agentId) return
+    warned = text !== undefined
+    return $.ui.status(text)
+  }
   try {
     const auth = prompt ? await credentials($) : undefined
     if (prompt && !auth) {
@@ -372,6 +342,7 @@ async function pickFor(
         pick.score = decision.score
         pick.dims = decision.dims
         pick.confidences = decision.confidences
+        if (warned) await status(undefined)
       } else {
         status(`${m === 'audit' ? 'Jeffort audit: no pick,' : 'Jeffort:'} kept ${String(e.effort)} (${decision?.reason ?? 'jev unavailable'})`)
       }
@@ -448,7 +419,6 @@ async function record($: Engine, pick: Pick & { level: Level }, usage: NonNullab
   }
   await persist($)
   await persistProject($)
-  await refreshStatus($)
 }
 
 export const register: Register = (on, options) => {
@@ -623,7 +593,6 @@ export const register: Register = (on, options) => {
       picks.set(e.turnId, pick)
       if (pick.level && prompt) {
         await update($, last, () => ({ level: pick.level!, baseline: String(e.effort), score: pick.score ?? 0, mode: m }))
-        await refreshStatus($)
       }
     }
 
@@ -731,14 +700,6 @@ export const register: Register = (on, options) => {
         {below}
       </Box>
     )
-  })
-
-  // A word among Claude Code's own mode labels at the right of the footer, so the mode is always
-  // on screen, audit above all, where nothing else says effort is being left alone.
-  on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
-    const m = await read($, mode)
-    if (m === 'off') return next(e)
-    return next({ ...e, props: { ...e.props, modes: [...e.props.modes, m === 'audit' ? 'jeffort audit' : 'jeffort'] } })
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {

@@ -230,6 +230,17 @@ const auditProject = (w: { store: Map<string, unknown> }, root: string) =>
 const textOf = (node: unknown): string =>
   typeof node === 'string' ? node : Array.isArray((node as any)?.children) ? (node as any).children.map(textOf).join('') : ''
 
+test('the status line carries warnings only, and a scored turn clears one', async ($, on) => {
+  const w = world(on, (p) => (p === 'flaky' ? Number.NaN : 0))
+  await start($, w)
+  await turn($, 'w1', 'flaky')
+  expect(w.statuses.at(-1)).toMatch(/kept high/)
+  await turn($, 'w2', 'easy')
+  expect(w.statuses.at(-1)).toBeUndefined()
+  await turn($, 'w3', 'easy')
+  expect(w.statuses.length).toBe(2)
+})
+
 test('a drop reads pick ← yours, a boost yours → pick, and the band counts tokens, never dollars', async ($, on) => {
   const w = world(on, (p) => (p === 'hard' ? 3 : 0))
   await start($, w)
@@ -245,7 +256,6 @@ test('a drop reads pick ← yours, a boost yours → pick, and the band counts t
   expect(drawn).not.toContain('$')
   expect(drawn).toContain('backgroundColor')
   await ui.unmount()
-  expect(w.statuses.at(-1)).toMatch(/^low ← high · ▰+▱* ~818 of 1\.8k output tokens saved$/)
 
   await turn($, 'e2', 'hard')
   await turn($, 'e3', 'hard')
@@ -255,30 +265,11 @@ test('a drop reads pick ← yours, a boost yours → pick, and the band counts t
   expect(drawn).toContain('"bold":true')
   expect(await ui.find({ type: 'Text', text: /extra/ })).toBeDefined()
   await ui.unmount()
-  expect(w.statuses.at(-1)).toMatch(/^high → xhigh · [▰▱]{10} ~6 extra output tokens$/)
 
   // Too narrow for the bar: the figure alone carries it.
   ui = await band(50)
   expect(JSON.stringify(await ui.drawn())).not.toContain('backgroundColor')
   await ui.unmount()
-})
-
-test('the footer says jeffort or jeffort audit beside the engine\'s own modes, and nothing when off', async ($, on) => {
-  const w = world(on, () => 0)
-  on('ui.render', async (_$, e: any) => ({ type: 'Text', props: {}, children: [e.props.modes.join(' & ')] }) as any)
-  await start($, w)
-  const footer = async () => {
-    const ui = await $.ui.mount({ plugin: 'jeffort', surface: 'terminal', component: 'SessionMode', props: { modes: ['focus'] } })
-    const text = JSON.stringify(await ui.drawn())
-    await ui.unmount()
-    return text
-  }
-  expect(await footer()).toContain('focus & jeffort')
-  await $.command.run({ command: 'jeffort', args: 'audit' })
-  expect(await footer()).toContain('focus & jeffort audit')
-  await $.command.run({ command: 'jeffort', args: 'off' })
-  expect(await footer()).not.toContain('jeffort')
-  expect(w.statuses.at(-1)).toBeUndefined()
 })
 
 test('audit mode scores every turn but never changes effort, and keeps its own totals', async ($, on) => {
@@ -343,6 +334,5 @@ test('the band and status line say what audit mode would pick', async ($, on) =>
   expect(textOf(await ui.drawn())).toContain('high → would pick xhigh')
   expect(await ui.find({ type: 'Text', text: /extra/ })).toBeDefined()
   await ui.unmount()
-  expect(w.statuses.at(-1)).toMatch(/^audit: high → would pick xhigh · ▰+▱* ~700 extra output tokens$/)
 })
 
