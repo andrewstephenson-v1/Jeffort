@@ -161,6 +161,16 @@ export function subagentCap(setting: unknown, inherited: unknown, levels: readon
   return LEVELS[i]!
 }
 
+/**
+ * A Box's `flexGrow` for a share of `total`, on a 0-1000 scale. Claude Code refuses a tree whose
+ * flexGrow is above 10000, and refuses the whole band with it, so token counts (millions in a long
+ * session) must never be used as weights directly. A non-zero share keeps at least 1.
+ */
+export function grow(part: number, total: number): number {
+  if (!(part > 0) || !(total > 0)) return 0
+  return Math.max(1, Math.round((1000 * Math.min(part, total)) / total))
+}
+
 /** `level`, lowered to `cap` when it is above it. */
 export const capLevel = (level: Level, cap: Level): Level => (LEVELS.indexOf(level) > LEVELS.indexOf(cap) ? cap : level)
 

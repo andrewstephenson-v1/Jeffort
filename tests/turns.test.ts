@@ -236,6 +236,30 @@ test('a background task\'s notice is not scored and keeps the last level', async
   expect(w.effort.get('n2')).toBe('xhigh')
 })
 
+test('a session with millions of output tokens still draws the band, in both bar styles', async ($, on) => {
+  const w = world(on, () => 3)
+  await start($, w)
+  await $.turn.start({ turnId: 'x1', text: 'hard' })
+  await steps($, 'x1')
+  await $.turn.complete({ turnId: 'x1', answer: '', durationMs: 1, isAborted: false, reason: 'answer', usage: usage(4_500_000, 500) })
+  const band = () =>
+    $.ui.mount({ plugin: 'jeffort', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, maxRows: 3, bodyColumns: 120 } })
+  // Claude Code refuses the whole band if any flexGrow is above 10000.
+  const grows = (tree: unknown): number[] =>
+    JSON.stringify(tree).match(/"flexGrow":\d+/g)?.map((g) => Number(g.split(':')[1])) ?? []
+  let ui = await band()
+  expect(await ui.find({ key: 'open' })).toBeDefined()
+  expect(Math.max(...grows(await ui.drawn()))).toBeLessThanOrEqual(1000)
+  await ui.unmount()
+  const pane = await $.ui.mount({ plugin: 'jeffort', surface: 'terminal', component: 'Pane', requestId: 'jeffort', props: {} } as any)
+  await pane.press({ key: 'tab-look' })
+  await pane.press({ key: 'bar-mix' })
+  await pane.unmount()
+  ui = await band()
+  expect(await ui.find({ key: 'open' })).toBeDefined()
+  await ui.unmount()
+})
+
 test('agreement reads yours = Jeffort\'s, and millions read as M', async ($, on) => {
   const w = world(on, () => 1.5)
   await start($, w)
