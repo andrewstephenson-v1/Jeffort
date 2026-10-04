@@ -27,13 +27,24 @@ Or, if you pick the Effort mix style, the share of turns at each level:
 
 ![The Jeffort band in Effort mix style: a bar split half medium, half high, with the percentages underneath](docs/images/band-mix.png)
 
-Click **Jeffort** for a pane with this session's, this project's and all projects' totals, where this session's turns landed, and the last few turns with the level Jeffort picked over your own:
+Click **Jeffort** for a pane with this session's, this project's and all projects' totals, and where this session's turns landed. It also lists the last few turns with the level Jeffort picked over your own:
 
-![The Jeffort pane's Stats tab: totals, a bar per effort level, and recent turns such as "medium ← high, 59 out"](docs/images/pane-stats.png)
+![The Jeffort pane's Stats tab: session and project totals, and a bar per effort level](docs/images/pane-stats.png)
 
 The **Appearance** tab picks a theme and the band's bar style:
 
 ![The Jeffort pane's Appearance tab: themes Default, Signal, Mono, Colour-safe and Retro, each with a row of colour swatches](docs/images/pane-appearance.png)
+
+### In the Claude desktop app
+
+The same band and pane work in the Code tab, where the pane docks beside the transcript:
+
+![The Jeffort band in the desktop app: medium (was high), a bar split low 14%, medium 79%, high 7%, net ~$0.21](docs/images/desktop-band.png)
+
+<p>
+  <img src="docs/images/desktop-pane-stats.png" alt="The Jeffort pane's Stats tab in the desktop app: session and project totals, and a bar per effort level" width="49%">
+  <img src="docs/images/desktop-pane-appearance.png" alt="The Jeffort pane's Appearance tab in the desktop app: themes with colour swatches, and the Savings and Effort mix bar styles" width="49%">
+</p>
 
 ## Install
 
