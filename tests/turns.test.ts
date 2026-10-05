@@ -5,11 +5,11 @@ const MODEL = 'claude-opus-5-5'
 const STEPS_PER_TURN = 2
 
 type Usage = { model: string; input_tokens: number; output_tokens: number; cache_read_input_tokens: number; cache_creation_input_tokens: number }
-const usage = (output: number, written: number): Usage => ({
+const usage = (output: number, written: number, read = 0): Usage => ({
   model: MODEL,
   input_tokens: 0,
   output_tokens: output,
-  cache_read_input_tokens: 0,
+  cache_read_input_tokens: read,
   cache_creation_input_tokens: written,
 })
 
@@ -20,7 +20,7 @@ const usage = (output: number, written: number): Usage => ({
  */
 function world(on: On, scoreOf: (prompt: string) => number) {
   const store = new Map<string, unknown>()
-  const w = { store, statuses: [] as Array<string | undefined>, root: '/Users/a/Dev/alpha', asked: [] as string[], effort: new Map<string, unknown>(), firstWrite: 500, firstParty: true, agents: [] as Array<{ id: string; type: string; task: string }> }
+  const w = { store, statuses: [] as Array<string | undefined>, root: '/Users/a/Dev/alpha', asked: [] as string[], effort: new Map<string, unknown>(), firstWrite: 500, firstParty: true, cached: 0, loseCache: false, continues: new Set<string>(), sentStates: [] as any[], agents: [] as Array<{ id: string; type: string; task: string }> }
   on('store.get', async (_$, e) => ({ value: store.get(e.key) }))
   on('store.set', async (_$, e) => {
     store.set(e.key, e.value)
@@ -33,6 +33,7 @@ function world(on: On, scoreOf: (prompt: string) => number) {
   on('store.keys', async () => ({ value: [...store.keys()] }))
   on('session.start', async (_$, e) => ({ cwd: e.cwd }))
   on('turn.start', async (_$, e) => ({ turnId: e.turnId }))
+  on('prompt.submit', async (_$, e) => ({ text: e.text }))
   on('command.register', async () => ({ value: undefined }))
   on('ui.status', async (_$, e) => {
     w.statuses.push(e.text)
@@ -51,16 +52,25 @@ function world(on: On, scoreOf: (prompt: string) => number) {
     return { value: agent ? [{ role: 'user', text: agent.task, toolUses: [] }] : [] } as any
   })
   on('clock.sleep', () => new Promise(() => {}))
+  let now = 0
+  on('clock.now', async () => ({ value: (now += 1000) }))
   on('http.fetch', async (_$, e) => {
-    const prompt = (JSON.parse(e.init?.body ?? '{}') as { state: { request: string } }).state.request
+    const state = (JSON.parse(e.init?.body ?? '{}') as { state: { request: string } }).state
+    w.sentStates.push(state)
+    const prompt = state.request
     w.asked.push(prompt)
     const answer = { score: scoreOf(prompt), confidence: 0.9 }
-    const answers = Object.fromEntries(['depth', 'scope', 'stakes', 'ambiguity'].map((d) => [d, answer]))
+    const answers: Record<string, unknown> = Object.fromEntries(['depth', 'scope', 'stakes', 'ambiguity'].map((d) => [d, answer]))
+    answers.continues_previous = { type: 'noul', noul: w.continues.has(prompt) ? 0.9 : 0.05 }
     return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify({ answers }) } }
   })
   on('turn.step', async function* (_$, e) {
     if (e.index === 0) w.effort.set(e.agentId ? `${e.agentId}/${e.turnId}` : e.turnId, e.effort)
-    const u = usage(100, e.index === 0 ? w.firstWrite : 30000)
+    // A cache that keeps growing, read back whole each request; unless the test makes it lose it.
+    const written = e.index === 0 ? w.firstWrite : 30000
+    const read = w.loseCache ? 0 : w.cached
+    w.cached = read + written
+    const u = usage(100, written, read)
     yield { kind: 'stop', stopReason: 'end_turn', usage: u }
     return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: u }
   })
@@ -258,6 +268,56 @@ test('a session with millions of output tokens still draws the band, in both bar
   ui = await band()
   expect(await ui.find({ key: 'open' })).toBeDefined()
   await ui.unmount()
+})
+
+test('"go ahead" after a hard plan keeps the plan\'s level, and Jev sees the previous prompt', async ($, on) => {
+  const w = world(on, (p) => (p.startsWith('design') ? 3 : 0))
+  w.continues.add('yes, go ahead')
+  await start($, w)
+  await turn($, 'c1', 'design the storage engine compaction')
+  await turn($, 'c2', 'yes, go ahead')
+  expect(w.sentStates[1].previous_request).toBe('design the storage engine compaction')
+  expect(w.effort.get('c2')).toBe('xhigh')
+  await turn($, 'c3', 'what time is it')
+  expect(w.effort.get('c3')).toBe('low')
+})
+
+test('prompts nobody typed are not scored, and keep the last level', async ($, on) => {
+  const w = world(on, (p) => (p === 'hard' ? 3 : 0))
+  await start($, w)
+  await turn($, 'o1', 'hard')
+  await $.prompt.submit({ text: 'Another Claude session sent a message', origin: { kind: 'peer' } } as any)
+  await turn($, 'o2', 'Another Claude session sent a message')
+  await $.prompt.submit({ text: 'easy', origin: { kind: 'composer' } } as any)
+  await turn($, 'o3', 'easy')
+  expect(w.asked).toEqual(['hard', 'easy'])
+  expect(w.effort.get('o2')).toBe('xhigh')
+  expect(w.effort.get('o3')).toBe('low')
+})
+
+test('secrets in a prompt never reach Jev', async ($, on) => {
+  const w = world(on, () => 0)
+  await start($, w)
+  await turn($, 's1', 'rotate api_key=supersecret123 on https://prod.example.com')
+  expect(w.asked[0]).not.toContain('supersecret123')
+  expect(w.asked[0]).not.toContain('prod.example.com')
+})
+
+test('two cache losses after effort changes pause Jeffort until /jeffort on', async ($, on) => {
+  const w = world(on, (p) => (p.startsWith('hard') ? 3 : 0))
+  await start($, w)
+  w.loseCache = true
+  w.firstWrite = 30000
+  await turn($, 'g1', 'hard one')
+  await turn($, 'g2', 'easy one')
+  await turn($, 'g3', 'hard two')
+  expect(w.statuses.some((t) => /paused for this session/.test(t ?? ''))).toBe(true)
+  await turn($, 'g4', 'easy two')
+  expect(w.effort.get('g4')).toBe('high')
+  await $.command.run({ command: 'jeffort', args: 'on' })
+  w.loseCache = false
+  await turn($, 'g5', 'easy three')
+  expect(w.effort.get('g5')).toBe('low')
 })
 
 test('agreement reads yours = Jeffort\'s, and millions read as M', async ($, on) => {
