@@ -1,6 +1,6 @@
 # Jeffort
 
-A Claude Code mod that sets Claude's effort level for each turn, automatically. [TypeSafe Jev](https://docs.typesafe.ai) scores your prompt on four narrow questions (reasoning depth, scope, stakes, ambiguity), and Jeffort maps the result onto an effort level. The model is never touched.
+A Claude Code mod that sets Claude's effort level for each turn, automatically. [TypeSafe Jev](https://docs.typesafe.ai) scores your prompt on four narrow questions (reasoning depth, scope, stakes, ambiguity), and Jeffort maps the result onto an effort level. A fifth question asks whether the prompt only approves the previous one ("yes, go ahead"), in which case the previous level stands. The model is never touched.
 
 ## Why I built it
 
@@ -101,10 +101,10 @@ One request per scored turn, holding the prompt, the start of your previous prom
 | Keys and tokens (`sk-…`, `ghp_…`, `xox…`, `AKIA…`, JWTs, PEM keys, `password=…`, long hex or base64) | `<secret>` |
 | URLs and connection strings | `<url>` |
 | E-mail addresses | `<email>` |
-| IP addresses | `<ip>` |
+| IPv4 addresses | `<ip>` |
 | Absolute and home paths | `<path>` |
 
-A prompt longer than 4,000 characters keeps its first 3,000 and last 1,000. Short names in backticks and relative paths stay, because they say what kind of work it is. The masking is pattern-based, so an unusual secret format can still get through: check your company's policy before using Jeffort on work repositories.
+A prompt longer than 4,000 characters keeps its first 3,000 and last 1,000. Slash commands are not sent at all. Short names in backticks and relative paths stay, because they say what kind of work it is. The masking is pattern-based, so an unusual secret format can still get through: check your company's policy before using Jeffort on work repositories.
 
 ## Usage
 
@@ -137,17 +137,15 @@ It also leaves these alone, so your own `/effort` stands:
 
 Only prompts a person wrote are scored: typed, sent over Remote Control, given to `claude -p` or the SDK, or a scheduled prompt of your own. A turn started by anything else (a background task finishing, another session's message, a channel relay, a subagent reporting back) is not sent to Jev. It keeps the previous turn's level, or the session's effort if there is none yet. So does a prompt Jev reads as only approving the previous one ("yes, go ahead").
 
-Measured on Opus 5.5: the first effort change in a conversation rebuilds about 22k tokens of cache, once. Later changes keep it. That one-time cost is subtracted from the savings the band shows. Jeffort spots it as a large cache write on the first request of a turn whose level changed, so it is an estimate too: a compaction on such a turn can look the same.
+Measured on Opus 5.5: the first effort change in a conversation rebuilds about 22k tokens of cache, once. Later changes keep it. That one-time cost is subtracted from the net dollar figure in the pane; the band's token figure is output tokens only. Jeffort spots it as a large cache write on the first request of a turn whose level changed, so it is an estimate too: a compaction on such a turn can look the same.
 
 ## Subagents
 
-Each subagent is scored once, on the task it was given, and keeps that level for its whole run. Its turns count toward the totals. It never counts as a cache rebuild, because a subagent starts a fresh conversation. A subagent on a model not listed above (Haiku, say) is left alone.
+Each subagent is scored once, on the task it was given, and keeps that level for its whole run. Its turns count toward the totals. It never counts as a cache rebuild, because a subagent starts a fresh conversation. A subagent on a model not listed above (Haiku, say) is left alone, except in audit mode, which changes nothing and so scores it too.
 
 Jeffort only changes a subagent that inherited the session's effort. It cannot read an agent's definition, so it treats an effort other than the session's as one the definition set, and leaves it. The gap: an agent whose definition sets the same level as your session looks inherited and gets scored. Forks and teammates carry on the parent's conversation, so they are left alone too.
 
 A subagent's task is usually a long, detailed brief, and Jev tends to read that as deep and wide work. Left alone, that sends most subagents to xhigh: one heavy multi-agent session ran 217 of 382 turns at xhigh against a medium setting. So a subagent may go at most one level above the effort it inherited. It is scored on the full scale and then capped, so its level means the same as the main loop's. Change it with **Highest effort for subagents** in `/config`: `same` uses the session's ceiling, or pick a fixed level.
-
-A background task's completion notice also starts a turn, but nobody typed it, so it is not scored and keeps the last level, like a subagent's reply.
 
 Turn subagent scoring off with the **Subagents too** setting in `/config`.
 
