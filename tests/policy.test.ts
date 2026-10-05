@@ -129,7 +129,7 @@ test('shares are whole percentages that always sum to 100', () => {
   expect(sum).toBe(100)
 })
 
-import { capLevel, estimateWouldSave, grow, initialMode, projectKey, projectName, subagentCap } from '../hooks/policy'
+import { CacheCheck, buildRequest as request, capLevel, continuesPrevious, estimateWouldSave, grow, initialMode, projectKey, projectName, subagentCap } from '../hooks/policy'
 
 test('the enabled setting set to false wins over the stored mode, and an old toggle still counts', () => {
   expect(initialMode('on', true, false)).toBe('off')
@@ -179,4 +179,28 @@ test('bar weights stay on a 0-1000 scale whatever the token counts', () => {
   expect(grow(0, 100)).toBe(0)
   expect(grow(5, 0)).toBe(0)
   expect(grow(200, 100)).toBe(1000)
+})
+
+test('the previous prompt and the continuation question go to Jev only when there was one', () => {
+  expect(request('fix it', 'claude-opus-5-5').questions).not.toHaveProperty('continues_previous')
+  const r = request('yes, go ahead', 'claude-opus-5-5', 'jev-latest', 'x'.repeat(2000))
+  expect(r.questions).toHaveProperty('continues_previous')
+  expect((r.state as { previous_request: string }).previous_request).toHaveLength(1500)
+  expect(continuesPrevious({ answers: { continues_previous: { type: 'noul', noul: 0.9 } } })).toBe(0.9)
+  expect(continuesPrevious({ answers: {} })).toBeUndefined()
+})
+
+test('the cache check pauses after two losses in a row, and a kept cache clears the count', () => {
+  const c = new CacheCheck()
+  const at = (t: number, effort: string, read: number, written: number) => ({ at: t, model: 'm', effort, read, written })
+  expect(c.see(at(0, 'high', 0, 40000))).toBe('fine')
+  expect(c.see(at(1, 'low', 0, 40000))).toBe('lost')
+  expect(c.see(at(2, 'high', 40000, 500))).toBe('fine')
+  expect(c.see(at(3, 'low', 0, 40500))).toBe('lost')
+  expect(c.see(at(4, 'high', 0, 40500))).toBe('pause')
+  // Same effort, or minutes apart (the cache may have expired): never counted.
+  const d = new CacheCheck()
+  d.see(at(0, 'high', 0, 40000))
+  expect(d.see(at(1, 'high', 0, 40000))).toBe('fine')
+  expect(d.see(at(10 * 60_000, 'low', 0, 40000))).toBe('fine')
 })

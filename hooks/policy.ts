@@ -171,6 +171,50 @@ export function grow(part: number, total: number): number {
   return Math.max(1, Math.round((1000 * Math.min(part, total)) / total))
 }
 
+/** One main-loop request as the cache check sees it. */
+export type CacheSample = { at: number; model: string; effort: unknown; read: number; written: number }
+export type CacheVerdict = 'fine' | 'lost' | 'pause'
+
+/**
+ * Confirms from the API's usage figures that changing effort keeps the prompt cache, where the model
+ * and sign-in checks cannot tell: CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS, an organization's HIPAA
+ * setup, or a gateway. After an effort change, a request that reads back far less than the one
+ * before it had cached, and writes it again, lost the cache. Two such losses in a row mean this
+ * setup does not keep it, and Jeffort stops changing effort for the session. A change that kept
+ * the cache clears the count, so the one-time rebuild on a conversation's first change (about 22k
+ * tokens on Opus 5.5) never pauses on its own. Requests minutes apart are left out: the cache may
+ * simply have expired.
+ */
+export class CacheCheck {
+  private before: CacheSample | undefined
+  private losses = 0
+
+  constructor(
+    private readonly lostAtLeast = 2048,
+    private readonly withinMs = 4 * 60_000,
+    private readonly pauseAfter = 2,
+  ) {}
+
+  /** Give it every main-loop request, in order. */
+  see(now: CacheSample): CacheVerdict {
+    const before = this.before
+    this.before = now
+    if (!before || before.effort === now.effort || before.model !== now.model || now.at - before.at > this.withinMs) return 'fine'
+    // Compare with everything the earlier request had cached: often only the conversation is lost
+    // while the system prompt stays cached, so the read rarely drops to zero.
+    const cachedBefore = before.read + before.written
+    const lost = cachedBefore - now.read >= this.lostAtLeast && now.written >= this.lostAtLeast / 2
+    this.losses = lost ? this.losses + 1 : 0
+    if (!lost) return 'fine'
+    return this.losses >= this.pauseAfter ? 'pause' : 'lost'
+  }
+
+  reset(): void {
+    this.before = undefined
+    this.losses = 0
+  }
+}
+
 /** `level`, lowered to `cap` when it is above it. */
 export const capLevel = (level: Level, cap: Level): Level => (LEVELS.indexOf(level) > LEVELS.indexOf(cap) ? cap : level)
 
@@ -180,21 +224,53 @@ type JevRequest = {
   questions: Record<string, unknown>
 }
 
+/** How much of the previous prompt goes with the current one: enough to recognise "ok, go ahead". */
+export const PREVIOUS_REQUEST_CHARS = 1500
+
 /**
- * Only the request and which Claude model will answer it go to Jev: nothing about the session or
- * earlier turns.
+ * Asked alongside the four dimensions when there was an earlier prompt: does this one just say
+ * "carry on" to it? Then the earlier level stands, instead of a bare "yes, do it" after a hard plan
+ * being scored as trivial on its own.
  */
-export function buildRequest(prompt: string, assistantModel: string, model = 'jev-latest'): JevRequest {
+const CONTINUES_PREVIOUS = {
+  type: 'noul',
+  instructions:
+    'Does `request` add no new work of its own and only tell the assistant to proceed with what `previous_request` asked (for example "yes", "do it", "carry on", "looks good, go")?',
+  criteria: {
+    true: 'Only tells the assistant to proceed with the earlier request',
+    false: 'Asks for something new, or changes what was asked',
+  },
+} as const
+
+/** Above this, Jev's yes means the prompt continues the previous one. */
+export const CONTINUES_THRESHOLD = 0.6
+
+/**
+ * What goes to Jev: the request (already filtered, see redact.ts), which Claude model will answer
+ * it, and the start of the previous request when there is one. Nothing else about the session.
+ */
+export function buildRequest(prompt: string, assistantModel: string, model = 'jev-latest', previous?: string): JevRequest {
+  const state: Record<string, unknown> = { request: prompt, assistant: assistantOf(assistantModel) }
+  if (previous) state.previous_request = previous.slice(0, PREVIOUS_REQUEST_CHARS)
   return {
     model,
-    state: { request: prompt, assistant: assistantOf(assistantModel) },
-    questions: Object.fromEntries(
-      DIMENSION_NAMES.map((d) => [
-        d,
-        { type: 'score', instructions: DIMENSIONS[d].instructions, criteria: DIMENSIONS[d].criteria },
-      ]),
-    ),
+    state,
+    questions: {
+      ...Object.fromEntries(
+        DIMENSION_NAMES.map((d) => [
+          d,
+          { type: 'score', instructions: DIMENSIONS[d].instructions, criteria: DIMENSIONS[d].criteria },
+        ]),
+      ),
+      ...(previous ? { continues_previous: CONTINUES_PREVIOUS } : {}),
+    },
   }
+}
+
+/** Jev's yes-probability that the request only continues the previous one; undefined if not asked. */
+export function continuesPrevious(body: unknown): number | undefined {
+  const a = (body as { answers?: Record<string, { noul?: unknown }> })?.answers?.continues_previous
+  return typeof a?.noul === 'number' && Number.isFinite(a.noul) ? a.noul : undefined
 }
 
 export type Dims = Record<Dimension, number>

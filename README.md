@@ -87,7 +87,24 @@ Three things that catch people out:
 
 If a turn shows `Jeffort: no TYPESAFE_API_KEY found`, none of those places had a key. Check with `grep -c '^TYPESAFE_API_KEY=.' ~/.config/jeffort/.env`, which should print 1. Jeffort rereads the files on each turn until it finds a key, so a fix applies on your next prompt with no reload.
 
-`TYPESAFE_MODEL` is optional and defaults to `jev-latest`. Prompts are sent to TypeSafe for scoring, with the name of the Claude model that will answer (so Jev can judge how much effort that model needs), and nothing else is.
+`TYPESAFE_MODEL` is optional and defaults to `jev-latest`.
+
+## What goes to TypeSafe
+
+One request per scored turn, holding the prompt, the start of your previous prompt (up to 1,500 characters, so Jev can tell "ok, go ahead" from a new task), and the name of the Claude model that will answer. Before anything leaves your machine, Jeffort masks:
+
+| In your prompt | Sent as |
+|---|---|
+| Pasted text | `[pasted text: N chars]` |
+| Fenced code blocks | `[code: N lines]` |
+| Inline code of 40 characters or more | `[code]` |
+| Keys and tokens (`sk-…`, `ghp_…`, `xox…`, `AKIA…`, JWTs, PEM keys, `password=…`, long hex or base64) | `<secret>` |
+| URLs and connection strings | `<url>` |
+| E-mail addresses | `<email>` |
+| IP addresses | `<ip>` |
+| Absolute and home paths | `<path>` |
+
+A prompt longer than 4,000 characters keeps its first 3,000 and last 1,000. Short names in backticks and relative paths stay, because they say what kind of work it is. The masking is pattern-based, so an unusual secret format can still get through: check your company's policy before using Jeffort on work repositories.
 
 ## Usage
 
@@ -111,14 +128,14 @@ That only holds with an Anthropic API key or a Claude subscription. It does not 
 
 Audit mode changes nothing, so it runs on any model and provider where the session has an effort level, including Bedrock, Vertex and older models.
 
-Jeffort currently needs Claude Code 2.1.284 or later for all three models. It detects Bedrock, Vertex and gateways and does nothing there, but it cannot yet detect `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` or a HIPAA configuration, so turn it off in those setups.
+Jeffort currently needs Claude Code 2.1.284 or later for all three models. It detects Bedrock, Vertex and gateways and does nothing there. For the setups it cannot see from the outside (`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`, an organization HIPAA configuration, an unusual gateway), it checks the API's own cache figures: if the prompt cache is written again after two effort changes in a row, Jeffort stops changing effort for the rest of the session and says so in the status line. `/jeffort on` resumes. The one-time rebuild on a conversation's first change does not count on its own.
 
 It also leaves these alone, so your own `/effort` stands:
 
 - Turns where Jev's confidence is below 0.3.
 - Turns where Jev cannot be reached or errors.
 
-A turn with no prompt of yours, such as a continuation or a subagent reporting back, is not sent to Jev. It keeps the previous turn's level, or the session's effort if there is none yet.
+Only prompts a person wrote are scored: typed, sent over Remote Control, given to `claude -p` or the SDK, or a scheduled prompt of your own. A turn started by anything else (a background task finishing, another session's message, a channel relay, a subagent reporting back) is not sent to Jev. It keeps the previous turn's level, or the session's effort if there is none yet. So does a prompt Jev reads as only approving the previous one ("yes, go ahead").
 
 Measured on Opus 5.5: the first effort change in a conversation rebuilds about 22k tokens of cache, once. Later changes keep it. That one-time cost is subtracted from the savings the band shows. Jeffort spots it as a large cache write on the first request of a turn whose level changed, so it is an estimate too: a compaction on such a turn can look the same.
 
@@ -161,6 +178,7 @@ claude plugin test .
 ## Layout
 
 - `hooks/register.tsx`: the hooks module (scoring, band, pane)
+- `hooks/redact.ts`: masks secrets, code, links and paths before a prompt goes to Jev
 - `hooks/policy.ts`: Jev questions, level mapping, themes, savings maths (no engine calls)
 - `types/index.d.ts`: state contract
 - `tests/`: `claude plugin test` suite

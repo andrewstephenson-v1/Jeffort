@@ -25,7 +25,10 @@ import {
   capLevel,
   buildRequest,
   cacheWritePrice,
+  CONTINUES_THRESHOLD,
+  CacheCheck,
   cleanPrompt,
+  continuesPrevious,
   decide,
   estimateSaved,
   estimateWouldSave,
@@ -47,11 +50,21 @@ import {
   subagentCap,
 } from './policy'
 import type { Dims, Level, Mode, Palette } from './policy'
+import { promptForJev } from './redact'
 
 const JEV_URL = 'https://api.typesafe.ai/v1/systemone'
 /** Per-request budget; routing must never hold up a turn for long. */
 const JEV_TIMEOUT_MS = 3000
 const MAX_TURNS_REMEMBERED = 20
+/**
+ * Where a prompt came from, for the ones a person wrote: typed at the prompt, sent over Remote
+ * Control, given to `claude -p` or the SDK, or a scheduled prompt of their own. Anything else that
+ * starts a turn (a background task's notice, another session's message, a channel relay) was not
+ * written as a request and is never scored.
+ */
+const SCORED_ORIGINS = new Set(['composer', 'bridge', 'sdk', 'scheduled-trigger'])
+/** A prompt as matched between prompt.submit and turn.start. */
+const promptKey = (text: string): string => text.replace(/\s+/g, ' ').trim().slice(0, 500)
 const MAX_AGENTS_REMEMBERED = 50
 const MAX_TURN_LOG = 50
 const COMMAND = 'jeffort'
@@ -131,8 +144,8 @@ async function credentials($: Engine): Promise<Auth | undefined> {
   return { key, model: (await $.env.get('TYPESAFE_MODEL')) || vars.TYPESAFE_MODEL || DEFAULT_MODEL }
 }
 
-async function score($: Engine, auth: Auth, prompt: string, assistantModel: string, levels: readonly Level[]) {
-  const body = JSON.stringify(buildRequest(prompt, assistantModel, auth.model))
+async function score($: Engine, auth: Auth, prompt: string, assistantModel: string, levels: readonly Level[], previous?: string) {
+  const body = JSON.stringify(buildRequest(prompt, assistantModel, auth.model, previous))
   // The engine's clock, not setTimeout (not part of the plugin runtime); aborted once the race settles.
   const stop = new AbortController()
   const reply = await Promise.race([
@@ -147,7 +160,8 @@ async function score($: Engine, auth: Auth, prompt: string, assistantModel: stri
       .catch(() => null),
   ]).finally(() => stop.abort())
   if (!reply?.ok) return null
-  return decide(JSON.parse(reply.text), levels)
+  const answers = JSON.parse(reply.text)
+  return { ...decide(answers, levels), continues: continuesPrevious(answers) }
 }
 
 const compact = (n: number): string => {
@@ -248,6 +262,10 @@ type Pick = {
   score?: number
   dims?: Dims
   confidences?: Dims
+  /** Jev's yes-probability that the prompt only continues the previous one, when asked. */
+  continues?: number
+  /** The prompt as sent to Jev: filtered and cut down. Kept to give the next turn its context. */
+  sent?: string
   excerpt: string
   /** Cache tokens written by the turn's first request, where an effort change rebuilds the cache. */
   firstWrite?: number
@@ -327,6 +345,7 @@ async function pickFor(
   levels: readonly Level[],
   m: Pick['mode'],
   label = '',
+  previous?: string,
 ): Promise<Pick> {
   const baseline = isLevel(e.effort) ? e.effort : null
   const excerpt = `${label}${(prompt ?? '').replace(/\s+/g, ' ')}`.slice(0, 80)
@@ -339,11 +358,15 @@ async function pickFor(
     return $.ui.status(text)
   }
   try {
-    const auth = prompt ? await credentials($) : undefined
-    if (prompt && !auth) {
+    // Secrets, code, URLs and paths are masked and a long prompt is cut down before it leaves.
+    const text = promptForJev(prompt)
+    const auth = text ? await credentials($) : undefined
+    if (text && !auth) {
       status('Jeffort: no TYPESAFE_API_KEY found. Put it in ~/.config/jeffort/.env (project .env files are not read)')
-    } else if (prompt && auth) {
-      const decision = await score($, auth, prompt, e.model, levels)
+    } else if (text && auth) {
+      pick.sent = text
+      const decision = await score($, auth, text, e.model, levels, previous)
+      pick.continues = decision?.continues
       if (decision?.level) {
         pick.level = decision.level
         pick.score = decision.score
@@ -446,6 +469,13 @@ export const register: Register = (on, options) => {
   // Audit mode's counterpart: what Jeffort would have picked on the previous main turn, kept by a
   // turn with no prompt. previousLevel stays the effort that actually ran.
   let previousWould: Level | null = null
+  // The previous main-loop prompt as sent to Jev, so "ok, go ahead" can be read as a continuation.
+  let previousPrompt: string | undefined
+  // Prompts that started a turn from somewhere other than a person, by promptKey, counted.
+  const unscored = new Map<string, number>()
+  // Checks that effort changes really keep the cache; pauses setting effort for the session if not.
+  const cacheCheck = new CacheCheck()
+  let paused = false
   // Each subagent's pick by agent id, made once on its task and reused by its later turns; null
   // where it is left alone. Forks are noted at spawn, where the engine says which ones are.
   const agentPicks = new Map<string, Pick | null>()
@@ -501,7 +531,14 @@ export const register: Register = (on, options) => {
       return { text: 'Jeffort pane opened.' }
     }
     const here = await loadProject($)
-    if (isMode(arg)) await setMode($, arg)
+    if (isMode(arg)) {
+      // Turning on again clears a cache-check pause and starts the check afresh.
+      if (arg === 'on') {
+        paused = false
+        cacheCheck.reset()
+      }
+      await setMode($, arg)
+    }
     else if (arg === 'reset' || arg === 'reset all') {
       // `reset` clears this session and this project; `reset all` every project and the overall
       // total. Audit totals go with the live ones.
@@ -547,11 +584,28 @@ export const register: Register = (on, options) => {
     }
   })
 
+  // Notes prompts that start a turn without a person writing them, so turn.start can skip them.
+  on('prompt.submit', ($, e, next) => {
+    if (!e.turnId && !SCORED_ORIGINS.has(e.origin.kind)) {
+      const key = promptKey(e.text)
+      unscored.set(key, (unscored.get(key) ?? 0) + 1)
+      while (unscored.size > MAX_TURNS_REMEMBERED) unscored.delete(unscored.keys().next().value as string)
+    }
+    return next(e)
+  })
+
   // The prompt the turn actually begins with, after every prompt.submit hook settled or dropped it.
-  // "" for a turn started without one (a continuation): those are never scored.
+  // "" for a turn started without one (a continuation) or by something other than a person: those
+  // are never scored and keep the last level.
   on('turn.start', ($, e, next) => {
     if (prompts.size >= MAX_TURNS_REMEMBERED) prompts.delete(prompts.keys().next().value as string)
-    prompts.set(e.turnId, cleanPrompt(e.text))
+    const key = promptKey(e.text)
+    const count = unscored.get(key)
+    if (count) {
+      if (count > 1) unscored.set(key, count - 1)
+      else unscored.delete(key)
+      prompts.set(e.turnId, '')
+    } else prompts.set(e.turnId, cleanPrompt(e.text))
     return next(e)
   })
 
@@ -569,7 +623,7 @@ export const register: Register = (on, options) => {
     // providers or Claude Code versions that would lose the cache are left alone: Jev is never
     // called for them. Audit mode changes nothing, so it runs on those too.
     const unsafe = !supportedVersion || !firstParty || !isCacheSafeModel(e.model)
-    if (e.effort === undefined || m === 'off' || (m === 'on' && unsafe)) {
+    if (e.effort === undefined || m === 'off' || (m === 'on' && (unsafe || paused))) {
       return yield* next(e)
     }
     const applies = (pick: Pick | null | undefined): pick is Pick & { level: Level } => !!pick?.level && pick.mode === 'on'
@@ -600,8 +654,14 @@ export const register: Register = (on, options) => {
       const prior = m === 'audit' ? previousWould : previousLevel
       const pick: Pick =
         prompt || !prior
-          ? await pickFor($, prompt, e, allowedLevels(options.floor, options.ceiling), m)
+          ? await pickFor($, prompt, e, allowedLevels(options.floor, options.ceiling), m, '', previousPrompt)
           : { mode: m, level: prior, baseline: isLevel(e.effort) ? e.effort : null, model: e.model, excerpt: '(no prompt: kept last level)' }
+      // "ok, go ahead" after a hard plan keeps the plan's level rather than being scored on its own.
+      if (prior && pick.level && (pick.continues ?? 0) > CONTINUES_THRESHOLD) {
+        pick.level = prior
+        pick.excerpt = `(continues) ${pick.excerpt}`.slice(0, 80)
+      }
+      if (pick.sent) previousPrompt = pick.sent
       picks.set(e.turnId, pick)
       if (pick.level && prompt) {
         await update($, last, () => ({ level: pick.level!, baseline: String(e.effort), score: pick.score ?? 0, mode: m }))
@@ -609,8 +669,26 @@ export const register: Register = (on, options) => {
     }
 
     const chosen = picks.get(e.turnId)
-    const result = yield* next(applies(chosen) ? { ...e, effort: chosen.level } : e)
+    const sent = applies(chosen) ? { ...e, effort: chosen.level } : e
+    const result = yield* next(sent)
     if (chosen && e.index === 0 && result.usage) chosen.firstWrite = result.usage.cache_creation_input_tokens
+    // The check is a safety net: if it cannot run, the turn goes on as it would without it.
+    const at = m === 'on' && result.usage ? await $.clock.now().catch(() => undefined) : undefined
+    if (at !== undefined && result.usage) {
+      const verdict = cacheCheck.see({
+        at,
+        model: e.model,
+        effort: sent.effort,
+        read: result.usage.cache_read_input_tokens,
+        written: result.usage.cache_creation_input_tokens,
+      })
+      if (verdict === 'lost') {
+        $.ui.status(`Jeffort: the prompt cache was written again after an effort change on ${e.model}. Jeffort pauses if it happens again.`)
+      } else if (verdict === 'pause') {
+        paused = true
+        $.ui.status(`Jeffort: paused for this session. Effort changes keep losing the prompt cache on ${e.model}. /jeffort on resumes.`)
+      }
+    }
     return result
   })
 
