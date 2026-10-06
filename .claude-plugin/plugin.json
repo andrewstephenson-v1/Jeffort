@@ -1,6 +1,6 @@
 {
   "name": "jeffort",
-  "version": "0.11.1",
+  "version": "0.12.0",
   "description": "Jeffort scores each prompt with TypeSafe Jev and sets Claude's effort level for the turn, never touching the model",
   "author": {
     "name": "Andrew Stephenson"
@@ -12,6 +12,12 @@
       "title": "Automatic effort",
       "description": "Choose the effort level for each turn from Jev's score. Off leaves your /effort setting alone and starts every session off, whatever /jeffort last set; /jeffort on or /jeffort audit still work for that session.",
       "default": true
+    },
+    "onlyLower": {
+      "type": "boolean",
+      "title": "Only lower effort",
+      "description": "Treat the effort you set as a ceiling: Jeffort lowers it for quick questions but never raises it. Applies to subagents too.",
+      "default": false
     },
     "subagents": {
       "type": "boolean",
