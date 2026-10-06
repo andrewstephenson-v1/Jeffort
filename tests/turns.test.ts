@@ -208,6 +208,18 @@ test('a subagent is scored once on its task and counted, never as a rebuild', as
   expect(overall(w).rebuiltTokens).toBe(before.rebuiltTokens ?? 0)
 })
 
+test('with only-lower on, Jeffort drops effort for quick questions but never raises it', { options: { ceiling: 'max', onlyLower: true } }, async ($, on) => {
+  const w = world(on, (p) => (p.startsWith('hard') ? 3 : 0))
+  w.agents.push({ id: 'a1', type: 'implementer', task: 'hard: fix the race' })
+  await start($, w)
+  await turn($, 'l1', 'hard: redesign the storage engine')
+  await turn($, 'l2', 'what does this flag do?')
+  await agentTurn($, 'a1', 's1')
+  expect(w.effort.get('l1')).toBe('high')
+  expect(w.effort.get('l2')).toBe('low')
+  expect(w.effort.get('a1/s1')).toBe('high')
+})
+
 test('a subagent goes at most one level above the effort it inherited, by default', { options: { ceiling: 'max' } }, async ($, on) => {
   const w = world(on, () => 3)
   w.agents.push({ id: 'a1', type: 'implementer', task: 'fix the blocking review' })

@@ -113,6 +113,7 @@ A prompt longer than 4,000 characters keeps its first 3,000 and last 1,000. Slas
 - Totals are kept for this session, this project and all projects. A project is the session's project root, keyed by its full path, so two folders with the same name stay separate. A git worktree counts as its own project.
 - **Appearance** tab: Default, Signal, Mono, Colour-safe, Retro, or Match terminal.
 - Settings (`/config`): the lowest and highest level Jeffort may pick (`max` is off by default), whether it sets effort for subagents too (on by default), and the highest level a subagent may get (one above the effort it inherited, by default).
+- **Only lower effort** (`/config`, off by default): treats the effort you set as a ceiling. Jeffort still drops it for a quick question ("what does this flag do?" at low), but never raises it above your setting, for the main session or subagents. Use it when you set effort deliberately and only want help with the easy turns.
 
 ## When it acts
 

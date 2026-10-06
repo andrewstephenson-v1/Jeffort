@@ -627,6 +627,11 @@ export const register: Register = (on, options) => {
       return yield* next(e)
     }
     const applies = (pick: Pick | null | undefined): pick is Pick & { level: Level } => !!pick?.level && pick.mode === 'on'
+    // With "Only lower effort" on, the effort you set is a ceiling: Jeffort may drop it for a quick
+    // question but never raises it. Scored on the full scale, then capped, like the subagent ceiling.
+    const lowerOnly = (pick: Pick) => {
+      if (options.onlyLower === true && pick.level && pick.baseline) pick.level = capLevel(pick.level, pick.baseline)
+    }
 
     if (e.agentId) {
       if (!options.subagents) return yield* next(e)
@@ -640,6 +645,7 @@ export const register: Register = (on, options) => {
         } catch {
           // fail open: the subagent's effort stands
         }
+        if (pick) lowerOnly(pick)
         agentPicks.set(e.agentId, pick)
       }
       const chosen = agentPicks.get(e.agentId)
@@ -661,6 +667,7 @@ export const register: Register = (on, options) => {
         pick.level = prior
         pick.excerpt = `(continues) ${pick.excerpt}`.slice(0, 80)
       }
+      lowerOnly(pick)
       if (pick.sent) previousPrompt = pick.sent
       picks.set(e.turnId, pick)
       if (pick.level && prompt) {
